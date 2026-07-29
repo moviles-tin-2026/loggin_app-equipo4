@@ -14,6 +14,11 @@ class SalesPage extends StatefulWidget {
 
 
 class _SalesPageState extends State<SalesPage> {
+  // VARIABLES DE SEGURIDAD (ROLES)
+  String _userRole = 'cajero'; // Por defecto el más restrictivo
+  bool _isLoadingRole = true;
+
+
   // VARIABLES MÓDULO DE VENTAS (POS)
   bool _isRegistrarVenta = true;
   List<Map<String, dynamic>> _carrito = [];
@@ -42,9 +47,51 @@ class _SalesPageState extends State<SalesPage> {
   @override
   void initState() {
     super.initState();
+    _cargarRolUsuario();
     _searchVentasController.addListener(() {
       setState(() => _busquedaVentasQuery = _searchVentasController.text.toLowerCase());
     });
+  }
+
+
+  // =======================================================
+  // SEGURIDAD: CARGAR EL ROL DESDE FIRESTORE
+  // =======================================================
+  Future<void> _cargarRolUsuario() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      try {
+        final doc = await _firestore.collection('usuarios').doc(user.uid).get();
+        if (doc.exists && mounted) {
+          setState(() {
+            _userRole = doc.data()?['rol']?.toString().toLowerCase() ?? 'cajero';
+            _isLoadingRole = false;
+          });
+        }
+      } catch (e) {
+        if (mounted) setState(() => _isLoadingRole = false);
+      }
+    } else {
+      if (mounted) setState(() => _isLoadingRole = false);
+    }
+  }
+
+
+  // =======================================================
+  // MOTOR DE AUDITORÍA (LOGS)
+  // =======================================================
+  Future<void> _registrarLog(String modulo, String accion) async {
+    try {
+      final emailActual = FirebaseAuth.instance.currentUser?.email ?? 'Sistema';
+      await _firestore.collection('logs').add({
+        'fecha': FieldValue.serverTimestamp(),
+        'modulo': modulo,
+        'accion': accion,
+        'usuario': emailActual,
+      });
+    } catch (e) {
+      debugPrint('Error al registrar log: $e');
+    }
   }
 
 
@@ -120,14 +167,35 @@ class _SalesPageState extends State<SalesPage> {
 
 
   void _ajustarCantidadCarrito(int index, int ajuste) {
+    final nuevaCantidad = _carrito[index]['cantidadCarrito'] + ajuste;
+
+
+    if (nuevaCantidad <= 0 && _userRole == 'cajero') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Requiere autorización de Supervisor para eliminar artículos de la cuenta.'), backgroundColor: Colors.orange)
+      );
+      return;
+    }
+
+
     setState(() {
-      final nuevaCantidad = _carrito[index]['cantidadCarrito'] + ajuste;
       if (nuevaCantidad <= 0) {
         _carrito.removeAt(index);
       } else if (nuevaCantidad <= _carrito[index]['stockDisponible']) {
         _carrito[index]['cantidadCarrito'] = nuevaCantidad;
       }
     });
+  }
+
+
+  void _intentarVaciarCarrito() {
+    if (_userRole == 'cajero') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Requiere autorización de Supervisor para cancelar toda la cuenta'), backgroundColor: Colors.orange)
+      );
+      return;
+    }
+    setState(() => _carrito.clear());
   }
 
 
@@ -179,6 +247,9 @@ class _SalesPageState extends State<SalesPage> {
 
 
       await batch.commit();
+     
+      // ¡AQUÍ ESTÁ LA MAGIA! Registramos la venta en el Log
+      await _registrarLog('Ventas', 'Procesó venta folio $folio por ${_formatearMoneda(_totalCarrito)}');
 
 
       if (!mounted) return;
@@ -275,6 +346,11 @@ class _SalesPageState extends State<SalesPage> {
   // =======================================================
   @override
   Widget build(BuildContext context) {
+    if (_isLoadingRole) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+
     final bool isDesktop = MediaQuery.of(context).size.width > 900;
    
     return Padding(
@@ -337,7 +413,6 @@ class _SalesPageState extends State<SalesPage> {
         ],
       );
     } else {
-      // MEJORA EN MÓVIL: Una sola tira vertical scrollable sin pantallas divididas
       return SingleChildScrollView(
         child: Column(
           children: [
@@ -373,7 +448,7 @@ class _SalesPageState extends State<SalesPage> {
 
 
         return GridView.builder(
-          shrinkWrap: !isDesktop, // Clave para evitar desbordamiento en scroll nativo móvil
+          shrinkWrap: !isDesktop,
           physics: isDesktop ? null : const NeverScrollableScrollPhysics(),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: isDesktop ? 3 : 2,
@@ -502,7 +577,12 @@ class _SalesPageState extends State<SalesPage> {
             children: [
               Row(children: [Icon(Icons.receipt_long, color: _primaryDark, size: 18), const SizedBox(width: 8), Text('Registro de Venta', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: _primaryDark))]),
               if (_carrito.isNotEmpty)
-                IconButton(icon: const Icon(Icons.delete_outline, size: 18, color: Colors.grey), onPressed: () => setState(() => _carrito.clear()), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+                IconButton(
+                  icon: Icon(Icons.delete_outline, size: 18, color: _userRole == 'cajero' ? Colors.grey.shade300 : Colors.redAccent),
+                  onPressed: _intentarVaciarCarrito,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints()
+                ),
             ],
           ),
         ),
@@ -543,9 +623,19 @@ class _SalesPageState extends State<SalesPage> {
                     ),
                     Row(
                       children: [
-                        InkWell(onTap: () => _ajustarCantidadCarrito(index, -1), child: Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(4)), child: const Icon(Icons.remove, size: 14))),
+                        InkWell(
+                          onTap: () => _ajustarCantidadCarrito(index, -1),
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(4)),
+                            child: Icon(Icons.remove, size: 14, color: (_userRole == 'cajero' && item['cantidadCarrito'] <= 1) ? Colors.grey.shade300 : Colors.black)
+                          )
+                        ),
                         Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Text('${item['cantidadCarrito']}', style: const TextStyle(fontWeight: FontWeight.bold))),
-                        InkWell(onTap: () => _ajustarCantidadCarrito(index, 1), child: Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(4)), child: const Icon(Icons.add, size: 14))),
+                        InkWell(
+                          onTap: () => _ajustarCantidadCarrito(index, 1),
+                          child: Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(4)), child: const Icon(Icons.add, size: 14))
+                        ),
                       ],
                     )
                   ],
@@ -561,6 +651,23 @@ class _SalesPageState extends State<SalesPage> {
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Subtotal', style: TextStyle(fontSize: 12)), Text(_formatearMoneda(_subtotalCarrito), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold))]),
               const SizedBox(height: 4),
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('IVA (16%)', style: TextStyle(fontSize: 12)), Text(_formatearMoneda(_ivaCarrito), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold))]),
+             
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Descuento Especial', style: TextStyle(fontSize: 12)),
+                  if (_userRole == 'cajero')
+                    const Text('No autorizado', style: TextStyle(fontSize: 10, color: Colors.red, fontWeight: FontWeight.bold))
+                  else
+                    InkWell(
+                      onTap: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Módulo de descuentos en desarrollo'))),
+                      child: const Text('Aplicar -', style: TextStyle(fontSize: 12, color: Colors.blue, fontWeight: FontWeight.bold))
+                    )
+                ]
+              ),
+
+
               const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Divider()),
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('Total', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _primaryDark)), Text(_formatearMoneda(_totalCarrito), style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: _primaryDark))]),
               const SizedBox(height: 16),
@@ -711,7 +818,6 @@ class _SalesPageState extends State<SalesPage> {
     );
 
 
-    // Si es móvil, envolvemos TODO el cuerpo en el scroll principal para que no quede nada estático
     return isDesktop ? Expanded(child: SingleChildScrollView(child: contenidoHistorial)) : SingleChildScrollView(child: contenidoHistorial);
   }
 

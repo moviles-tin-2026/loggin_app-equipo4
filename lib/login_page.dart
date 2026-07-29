@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'inventory_page.dart'; // Cambiado aquí (sin la carpeta screens)// Para navegar al inventario tras el éxito
+import 'package:cloud_firestore/cloud_firestore.dart'; // IMPORTANTE: Agregado para leer Firestore
+import 'inventory_page.dart';
 
 
 class LoginPage extends StatefulWidget {
@@ -43,25 +44,71 @@ class _LoginPageState extends State<LoginPage> {
 
 
     try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
+      // 1. Iniciar sesión con Firebase Auth
+      UserCredential userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
 
 
+      // 2. Buscar el perfil del usuario en Firestore para ver su Rol y Estado
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance
+          .collection('usuarios')
+          .doc(userCredential.user!.uid)
+          .get();
+
+
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Inicio de sesión exitoso'),
-          backgroundColor: Colors.green,
-        ),
-      );
-     
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const InventoryPage()),
-      );
-     
+
+
+      if (userDoc.exists) {
+        // Extraer los datos (Si no tiene, asume activo y cajero por seguridad)
+        String estado = userDoc.get('estado') ?? 'Activo';
+        String rol = userDoc.get('rol') ?? 'cajero';
+
+
+        // 3. Validar si la cuenta fue inhabilitada por un Administrador
+        if (estado == 'Inactivo') {
+          await FirebaseAuth.instance.signOut(); // Le cerramos la sesión inmediatamente
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Tu cuenta está inhabilitada. Contacta al administrador.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          setState(() {
+            _isLoading = false;
+          });
+          return; // Detenemos el proceso para que no entre
+        }
+
+
+        // 4. Si la cuenta está activa, mostramos mensaje personalizado y lo dejamos entrar
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Inicio exitoso. Estás en modo: ${rol.toUpperCase()}'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const InventoryPage()),
+        );
+      } else {
+        // Si por alguna razón el usuario está en Auth pero no en Firestore
+        await FirebaseAuth.instance.signOut();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Error: No se encontró el perfil del usuario en la base de datos.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+
+
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
       String message = 'Error al iniciar sesión';
@@ -71,12 +118,22 @@ class _LoginPageState extends State<LoginPage> {
         message = 'La contraseña es incorrecta';
       } else if (e.code == 'invalid-email') {
         message = 'El correo no es válido';
+      } else if (e.code == 'user-disabled') {
+        message = 'Esta cuenta ha sido deshabilitada desde Firebase.';
       }
 
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(message),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error inesperado: $e'),
           backgroundColor: Colors.red,
         ),
       );
