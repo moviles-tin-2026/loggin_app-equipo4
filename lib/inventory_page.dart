@@ -4,21 +4,26 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+
+// Importaciones de nuestras pantallas
 import 'login_page.dart';
 import 'sales_page.dart';
 import 'users_page.dart';
-
+import 'logs_page.dart';
+import 'dashboard_page.dart'; // <--- LA NUEVA VISTA GENERAL
 
 class InventoryPage extends StatefulWidget {
   const InventoryPage({super.key});
-
 
   @override
   State<InventoryPage> createState() => _InventoryPageState();
 }
 
-
 class _InventoryPageState extends State<InventoryPage> {
+  // VARIABLES DE SEGURIDAD (ROLES)
+  String _userRole = 'cajero'; // Por defecto el más restrictivo
+  bool _isLoadingRole = true;
+
   // CONTROLADORES INVENTARIO
   final _nombreProductoController = TextEditingController();
   final _marcaController = TextEditingController();
@@ -26,45 +31,79 @@ class _InventoryPageState extends State<InventoryPage> {
   final _stockMinimoController = TextEditingController();
   final _precioController = TextEditingController();
   final _searchController = TextEditingController();
- 
+  
   // VARIABLES DE ESTADO INVENTARIO
   String _busquedaQuery = '';
   final List<String> _categorias = ['Computadoras y laptops', 'Componentes', 'Periféricos', 'Audio', 'Accesorios'];
   String? _categoriaSeleccionada;
   String _filtroActual = 'Todos';
 
-
   // VARIABLES DE IMAGEN
   final ImagePicker _picker = ImagePicker();
   XFile? _imagenSeleccionada;
   bool _isSubiendoImagen = false;
 
-
   // SERVICIOS
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
- 
+  
   // AHORA ARRANCA EN 0 (VISTA GENERAL)
   int _selectedIndex = 0;
 
-
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-
 
   // COLORES BRANDING
   final Color _primaryDark = const Color(0xFF0F172A);
   final Color _accentGreen = const Color(0xFF059669);
   final Color _bgLight = const Color(0xFFF8FAFC);
 
-
   @override
   void initState() {
     super.initState();
+    _cargarRolUsuario();
     _searchController.addListener(() {
       setState(() => _busquedaQuery = _searchController.text.toLowerCase());
     });
   }
 
+  // =======================================================
+  // SEGURIDAD: CARGAR EL ROL DESDE FIRESTORE
+  // =======================================================
+  Future<void> _cargarRolUsuario() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      try {
+        final doc = await _firestore.collection('usuarios').doc(user.uid).get();
+        if (doc.exists && mounted) {
+          setState(() {
+            _userRole = doc.data()?['rol']?.toString().toLowerCase() ?? 'cajero';
+            _isLoadingRole = false;
+          });
+        }
+      } catch (e) {
+        if (mounted) setState(() => _isLoadingRole = false);
+      }
+    } else {
+      if (mounted) setState(() => _isLoadingRole = false);
+    }
+  }
+
+  // =======================================================
+  // MOTOR DE AUDITORÍA (LOGS)
+  // =======================================================
+  Future<void> _registrarLog(String modulo, String accion) async {
+    try {
+      final emailActual = FirebaseAuth.instance.currentUser?.email ?? 'Sistema';
+      await _firestore.collection('logs').add({
+        'fecha': FieldValue.serverTimestamp(),
+        'modulo': modulo,
+        'accion': accion,
+        'usuario': emailActual,
+      });
+    } catch (e) {
+      debugPrint('Error al registrar log: $e');
+    }
+  }
 
   @override
   void dispose() {
@@ -77,14 +116,12 @@ class _InventoryPageState extends State<InventoryPage> {
     super.dispose();
   }
 
-
   String _formatearMoneda(double cantidad) {
     List<String> partes = cantidad.toStringAsFixed(2).split('.');
     RegExp reg = RegExp(r'\B(?=(\d{3})+(?!\d))');
     partes[0] = partes[0].replaceAll(reg, ',');
     return '\$${partes.join('.')}';
   }
-
 
   // =======================================================
   // FUNCIONES DE INVENTARIO (CRUD)
@@ -96,24 +133,19 @@ class _InventoryPageState extends State<InventoryPage> {
     final stockMinimoTexto = _stockMinimoController.text.trim();
     final precioTexto = _precioController.text.trim();
 
-
     if (nombre.isEmpty || marca.isEmpty || _categoriaSeleccionada == null || stockInicialTexto.isEmpty || stockMinimoTexto.isEmpty || precioTexto.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Completa todos los campos'), backgroundColor: Colors.red));
       return;
     }
 
-
     final stockInicial = int.tryParse(stockInicialTexto);
     final stockMinimo = int.tryParse(stockMinimoTexto);
     final precio = double.tryParse(precioTexto);
 
-
     if (stockInicial == null || stockMinimo == null || precio == null) return;
-
 
     setStateDialog(() => _isSubiendoImagen = true);
     String urlImagenFinal = urlImagenExistente ?? '';
-
 
     try {
       if (_imagenSeleccionada != null) {
@@ -128,20 +160,20 @@ class _InventoryPageState extends State<InventoryPage> {
         urlImagenFinal = await ref.getDownloadURL();
       }
 
-
       final Map<String, dynamic> datosProducto = {
         'nombre': nombre, 'marca': marca, 'categoria': _categoriaSeleccionada,
         'cantidad': stockInicial, 'stockMinimo': stockMinimo, 'precio': precio,
         'urlImagen': urlImagenFinal, 'usuarioId': FirebaseAuth.instance.currentUser?.uid,
       };
 
-
       if (editDocId == null) {
         datosProducto['fechaCreacion'] = FieldValue.serverTimestamp();
         await _firestore.collection('inventarios').add(datosProducto);
+        await _registrarLog('Inventario', 'Registró nuevo producto: $nombre');
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Producto registrado'), backgroundColor: Colors.green));
       } else {
         await _firestore.collection('inventarios').doc(editDocId).update(datosProducto);
+        await _registrarLog('Inventario', 'Actualizó información del producto: $nombre');
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Producto actualizado'), backgroundColor: Colors.indigo));
       }
       Navigator.pop(dialogContext);
@@ -152,18 +184,22 @@ class _InventoryPageState extends State<InventoryPage> {
     }
   }
 
-
-  Future<void> _ajustarStock(String docId, int cantidadActual, int ajuste) async {
+  Future<void> _ajustarStock(String docId, int cantidadActual, int ajuste, String nombreProducto) async {
+    if (_userRole == 'cajero') return; 
     final nuevaCantidad = cantidadActual + ajuste;
     if (nuevaCantidad < 0) return;
+    
     await _firestore.collection('inventarios').doc(docId).update({'cantidad': nuevaCantidad});
+    
+    String tipoAjuste = ajuste > 0 ? "Aumentó" : "Redujo";
+    await _registrarLog('Inventario', '$tipoAjuste el stock de "$nombreProducto" de $cantidadActual a $nuevaCantidad');
   }
 
-
-  Future<void> _eliminarProducto(String docId) async {
+  Future<void> _eliminarProducto(String docId, String nombreProducto) async {
+    if (_userRole == 'cajero') return; 
     await _firestore.collection('inventarios').doc(docId).delete();
+    await _registrarLog('Inventario', 'Eliminó el producto: $nombreProducto');
   }
-
 
   void _mostrarConfirmacionEliminar(String docId, String nombreProducto) {
     showDialog(
@@ -175,15 +211,16 @@ class _InventoryPageState extends State<InventoryPage> {
           content: Text('¿Deseas eliminar "$nombreProducto"? Esta acción no se puede deshacer.'),
           actions: [
             TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancelar', style: TextStyle(color: Colors.grey))),
-            ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade600, foregroundColor: Colors.white), onPressed: () { Navigator.pop(dialogContext); _eliminarProducto(docId); }, child: const Text('Eliminar')),
+            ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade600, foregroundColor: Colors.white), onPressed: () { Navigator.pop(dialogContext); _eliminarProducto(docId, nombreProducto); }, child: const Text('Eliminar')),
           ],
         );
       },
     );
   }
 
-
   void _mostrarFormularioProducto({String? docId, Map<String, dynamic>? productData}) {
+    if (_userRole == 'cajero') return; 
+
     final bool isEditing = docId != null && productData != null;
     if (isEditing) {
       _nombreProductoController.text = productData['nombre'] ?? '';
@@ -197,7 +234,6 @@ class _InventoryPageState extends State<InventoryPage> {
       _stockInicialController.clear(); _stockMinimoController.clear(); _precioController.clear();
     }
     _imagenSeleccionada = null; _isSubiendoImagen = false;
-
 
     showDialog(
       context: context, barrierDismissible: !_isSubiendoImagen,
@@ -277,13 +313,17 @@ class _InventoryPageState extends State<InventoryPage> {
     );
   }
 
-
   // =======================================================
   // ESTRUCTURA BASE DE LA PANTALLA (SIDEBAR Y HEADER)
   // =======================================================
   @override
   Widget build(BuildContext context) {
     final bool isDesktop = MediaQuery.of(context).size.width > 900;
+    
+    if (_isLoadingRole) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
     return Scaffold(
       key: _scaffoldKey, backgroundColor: _bgLight, drawer: isDesktop ? null : Drawer(child: _buildSidebar()),
       body: Row(
@@ -295,18 +335,19 @@ class _InventoryPageState extends State<InventoryPage> {
     );
   }
 
-
   Widget _buildBodyContent(bool isDesktop) {
-    if (_selectedIndex == 0) {
-      return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.dashboard_customize_outlined, size: 64, color: Colors.grey.shade300), const SizedBox(height: 16), Text('Vista General en construcción', style: TextStyle(fontSize: 20, color: Colors.grey.shade400, fontWeight: FontWeight.bold))]));
-    }
+    // AQUÍ REEMPLAZAMOS EL TEXTO POR LA VISTA DE DASHBOARD
+    if (_selectedIndex == 0) return DashboardPage(isDesktop: isDesktop, userRole: _userRole);
+    
     if (_selectedIndex == 1) return _buildInventoryView(isDesktop);
     if (_selectedIndex == 2) return SalesPage(isDesktop: isDesktop);
-    if (_selectedIndex == 3) return UsersPage(isDesktop: isDesktop);
-   
+    
+    // Solo el Admin puede ver la pantalla de usuarios y Logs
+    if (_selectedIndex == 3 && _userRole == 'administrador') return UsersPage(isDesktop: isDesktop);
+    if (_selectedIndex == 4 && _userRole == 'administrador') return LogsPage(isDesktop: isDesktop);
+    
     return Container();
   }
-
 
   // -------------------------------------------------------
   // VISTA INVENTARIO
@@ -329,12 +370,13 @@ class _InventoryPageState extends State<InventoryPage> {
                     const Text('Agrega productos, edita existencias y gestiona alertas.', style: TextStyle(color: Colors.grey, fontSize: 13)),
                   ],
                 ),
-                ElevatedButton.icon(
-                  onPressed: () => _mostrarFormularioProducto(),
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Añadir Nuevo Producto'),
-                  style: ElevatedButton.styleFrom(backgroundColor: _accentGreen, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-                ),
+                if (_userRole != 'cajero')
+                  ElevatedButton.icon(
+                    onPressed: () => _mostrarFormularioProducto(),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Añadir Nuevo Producto'),
+                    style: ElevatedButton.styleFrom(backgroundColor: _accentGreen, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                  ),
               ],
             )
           else
@@ -344,32 +386,33 @@ class _InventoryPageState extends State<InventoryPage> {
                 Text('Control de Existencias e\nInventario', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: _primaryDark)),
                 const SizedBox(height: 8),
                 const Text('Agrega productos, edita existencias en tiempo real y gestiona alertas.', style: TextStyle(color: Colors.grey, fontSize: 13)),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () => _mostrarFormularioProducto(),
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('Añadir Nuevo Producto'),
-                    style: ElevatedButton.styleFrom(backgroundColor: _accentGreen, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                
+                if (_userRole != 'cajero') ...[
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () => _mostrarFormularioProducto(),
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('Añadir Nuevo Producto'),
+                      style: ElevatedButton.styleFrom(backgroundColor: _accentGreen, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
-         
+          
           const SizedBox(height: 24),
-
 
           StreamBuilder<QuerySnapshot>(
             stream: _firestore.collection('inventarios').snapshots(),
             builder: (context, snapshot) {
               if (!snapshot.hasData) return const SizedBox();
-             
+              
               double valorTotal = 0;
               int unidadesTotales = 0;
               int catalogoActivo = snapshot.data!.docs.length;
               int alertasStock = 0;
-
 
               for (var doc in snapshot.data!.docs) {
                 final data = doc.data() as Map<String, dynamic>;
@@ -377,14 +420,12 @@ class _InventoryPageState extends State<InventoryPage> {
                 final double precio = (data['precio'] ?? 0).toDouble();
                 final int stockMinimo = data['stockMinimo'] ?? 0;
 
-
                 valorTotal += (cantidad * precio);
                 unidadesTotales += cantidad;
                 if (cantidad <= stockMinimo) {
                   alertasStock++;
                 }
               }
-
 
               return Column(
                 children: [
@@ -425,7 +466,6 @@ class _InventoryPageState extends State<InventoryPage> {
               );
             },
           ),
-
 
           Container(
             padding: EdgeInsets.all(isDesktop ? 0 : 16),
@@ -472,7 +512,7 @@ class _InventoryPageState extends State<InventoryPage> {
             ),
           ),
           const SizedBox(height: 24),
-         
+          
           if (isDesktop) ...[
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
@@ -490,7 +530,6 @@ class _InventoryPageState extends State<InventoryPage> {
             const Divider(height: 1),
           ],
 
-
           Expanded(
             child: Container(
               decoration: isDesktop ? BoxDecoration(
@@ -503,13 +542,13 @@ class _InventoryPageState extends State<InventoryPage> {
                 builder: (context, snapshot) {
                   if (snapshot.hasError) return const Center(child: Text('Error al cargar datos'));
                   if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                 
+                  
                   var docs = snapshot.data!.docs;
-                 
+                  
                   docs = docs.where((doc) {
                     final data = doc.data() as Map<String, dynamic>;
                     final String nombreProducto = (data['nombre'] ?? '').toString().toLowerCase();
-                   
+                    
                     bool cumpleFiltro = true;
                     if (_filtroActual == 'Bajo stock') {
                       final int cant = data['cantidad'] ?? 0;
@@ -522,7 +561,7 @@ class _InventoryPageState extends State<InventoryPage> {
                     bool cumpleBusqueda = nombreProducto.contains(_busquedaQuery);
                     return cumpleFiltro && cumpleBusqueda;
                   }).toList();
-                 
+                  
                   if (docs.isEmpty) {
                     return Center(
                       child: Column(
@@ -535,7 +574,6 @@ class _InventoryPageState extends State<InventoryPage> {
                       ),
                     );
                   }
-
 
                   return ListView.separated(
                     padding: EdgeInsets.symmetric(horizontal: isDesktop ? 24.0 : 0, vertical: 8.0),
@@ -556,7 +594,6 @@ class _InventoryPageState extends State<InventoryPage> {
       ),
     );
   }
-
 
   Widget _buildKPICard({required IconData icon, required Color iconColor, required Color bgColor, required String title, required String value, required String subtitle, required bool isDesktop}) {
     return Container(
@@ -586,7 +623,6 @@ class _InventoryPageState extends State<InventoryPage> {
     );
   }
 
-
   Widget _buildProductCardMobile(Map<String, dynamic> data, String docId) {
     final String nombre = data['nombre'] ?? 'Sin nombre';
     final String marca = data['marca'] ?? 'Sin marca';
@@ -595,12 +631,11 @@ class _InventoryPageState extends State<InventoryPage> {
     final int cantidad = data['cantidad'] ?? 0;
     final int stockMinimo = data['stockMinimo'] ?? 0;
     final String urlImagen = data['urlImagen'] ?? '';
-   
+    
     final bool bajoStock = cantidad <= stockMinimo;
     final double stockMeta = stockMinimo > 0 ? (stockMinimo * 2).toDouble() : 100.0;
     final double stockPercentage = (cantidad / stockMeta).clamp(0.0, 1.0);
     final Color stockColor = bajoStock ? Colors.red : _accentGreen;
-
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -625,21 +660,28 @@ class _InventoryPageState extends State<InventoryPage> {
                   Text(nombre, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: _primaryDark)),
                 ],
               ),
-              Row(
-                children: [
-                  IconButton(
-                    padding: EdgeInsets.zero, constraints: const BoxConstraints(),
-                    icon: Icon(Icons.edit_outlined, size: 20, color: Colors.grey.shade400),
-                    onPressed: () => _mostrarFormularioProducto(docId: docId, productData: data),
-                  ),
-                  const SizedBox(width: 12),
-                  IconButton(
-                    padding: EdgeInsets.zero, constraints: const BoxConstraints(),
-                    icon: Icon(Icons.delete_outline, size: 20, color: Colors.grey.shade400),
-                    onPressed: () => _mostrarConfirmacionEliminar(docId, nombre),
-                  ),
-                ],
-              ),
+              if (_userRole != 'cajero') ...[
+                Row(
+                  children: [
+                    IconButton(
+                      padding: EdgeInsets.zero, constraints: const BoxConstraints(),
+                      icon: Icon(Icons.edit_outlined, size: 20, color: Colors.grey.shade400),
+                      onPressed: () => _mostrarFormularioProducto(docId: docId, productData: data),
+                    ),
+                    const SizedBox(width: 12),
+                    IconButton(
+                      padding: EdgeInsets.zero, constraints: const BoxConstraints(),
+                      icon: Icon(Icons.delete_outline, size: 20, color: Colors.grey.shade400),
+                      onPressed: () => _mostrarConfirmacionEliminar(docId, nombre),
+                    ),
+                  ],
+                ),
+              ] else ...[
+                const Padding(
+                  padding: EdgeInsets.only(top: 8.0),
+                  child: Text('Solo lectura', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                )
+              ]
             ],
           ),
           const SizedBox(height: 12),
@@ -673,21 +715,23 @@ class _InventoryPageState extends State<InventoryPage> {
                     Text('$cantidad uds', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: _primaryDark)),
                   ],
                 ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    InkWell(
-                      onTap: () => _ajustarStock(docId, cantidad, -1),
-                      child: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.shade300)), child: const Icon(Icons.remove, size: 16)),
-                    ),
-                    const Padding(padding: EdgeInsets.symmetric(horizontal: 16.0), child: Text('Ajustar', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold))),
-                    InkWell(
-                      onTap: () => _ajustarStock(docId, cantidad, 1),
-                      child: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.shade300)), child: const Icon(Icons.add, size: 16)),
-                    ),
-                  ],
-                ),
+                if (_userRole != 'cajero') ...[
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      InkWell(
+                        onTap: () => _ajustarStock(docId, cantidad, -1, nombre),
+                        child: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.shade300)), child: const Icon(Icons.remove, size: 16)),
+                      ),
+                      const Padding(padding: EdgeInsets.symmetric(horizontal: 16.0), child: Text('Ajustar', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold))),
+                      InkWell(
+                        onTap: () => _ajustarStock(docId, cantidad, 1, nombre),
+                        child: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.shade300)), child: const Icon(Icons.add, size: 16)),
+                      ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 16),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(4),
@@ -701,7 +745,6 @@ class _InventoryPageState extends State<InventoryPage> {
     );
   }
 
-
   Widget _buildProductRow(Map<String, dynamic> data, String docId) {
     final String nombre = data['nombre'] ?? 'Sin nombre';
     final String marca = data['marca'] ?? 'Sin marca';
@@ -710,12 +753,11 @@ class _InventoryPageState extends State<InventoryPage> {
     final int cantidad = data['cantidad'] ?? 0;
     final int stockMinimo = data['stockMinimo'] ?? 0;
     final String urlImagen = data['urlImagen'] ?? '';
-   
+    
     final bool bajoStock = cantidad <= stockMinimo;
     final double stockMeta = stockMinimo > 0 ? (stockMinimo * 2).toDouble() : 100.0;
     final double stockPercentage = (cantidad / stockMeta).clamp(0.0, 1.0);
     final Color stockColor = bajoStock ? Colors.red : _accentGreen;
-
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
@@ -754,17 +796,21 @@ class _InventoryPageState extends State<InventoryPage> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                IconButton(
-                  padding: EdgeInsets.zero, constraints: const BoxConstraints(),
-                  icon: Icon(Icons.edit_outlined, size: 18, color: Colors.grey.shade500),
-                  onPressed: () => _mostrarFormularioProducto(docId: docId, productData: data),
-                ),
-                const SizedBox(width: 12),
-                IconButton(
-                  padding: EdgeInsets.zero, constraints: const BoxConstraints(),
-                  icon: Icon(Icons.delete_outline, size: 18, color: Colors.grey.shade500),
-                  onPressed: () => _mostrarConfirmacionEliminar(docId, nombre),
-                ),
+                if (_userRole != 'cajero') ...[
+                  IconButton(
+                    padding: EdgeInsets.zero, constraints: const BoxConstraints(),
+                    icon: Icon(Icons.edit_outlined, size: 18, color: Colors.grey.shade500),
+                    onPressed: () => _mostrarFormularioProducto(docId: docId, productData: data),
+                  ),
+                  const SizedBox(width: 12),
+                  IconButton(
+                    padding: EdgeInsets.zero, constraints: const BoxConstraints(),
+                    icon: Icon(Icons.delete_outline, size: 18, color: Colors.grey.shade500),
+                    onPressed: () => _mostrarConfirmacionEliminar(docId, nombre),
+                  ),
+                ] else ...[
+                  const Text('Solo lectura', style: TextStyle(fontSize: 10, color: Colors.grey))
+                ]
               ],
             ),
           ),
@@ -772,7 +818,6 @@ class _InventoryPageState extends State<InventoryPage> {
       ),
     );
   }
-
 
   Widget _buildFilterPill(String label) {
     final bool isActive = _filtroActual == label;
@@ -788,7 +833,6 @@ class _InventoryPageState extends State<InventoryPage> {
     );
   }
 
-
   Widget _buildSidebar() {
     return Container(
       width: 250, color: _primaryDark,
@@ -797,12 +841,17 @@ class _InventoryPageState extends State<InventoryPage> {
           const SizedBox(height: 48),
           Row(mainAxisAlignment: MainAxisAlignment.center, children: const [Icon(Icons.hub, color: Colors.white, size: 24), SizedBox(width: 12), Text('PyME-Sync', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold))]),
           const SizedBox(height: 48),
-         
+          
           _buildSidebarItem(Icons.dashboard_outlined, 'Vista General', 0),
           _buildSidebarItem(Icons.inventory_2, 'Almacén / Inventario', 1),
           _buildSidebarItem(Icons.point_of_sale, 'Registrar Ventas', 2),
-          _buildSidebarItem(Icons.people_alt_outlined, 'Usuarios', 3),
-         
+          
+          // OCULTAMOS PESTAÑAS "USUARIOS" y "LOG DE AUDITORÍA" A LOS QUE NO SEAN ADMIN
+          if (_userRole == 'administrador') ...[
+            _buildSidebarItem(Icons.people_alt_outlined, 'Usuarios', 3),
+            _buildSidebarItem(Icons.security, 'Log de Auditoría', 4),
+          ],
+          
           const Spacer(),
           Padding(
             padding: const EdgeInsets.all(24.0),
@@ -815,7 +864,6 @@ class _InventoryPageState extends State<InventoryPage> {
       ),
     );
   }
-
 
   Widget _buildSidebarItem(IconData icon, String title, int index) {
     final isActive = _selectedIndex == index;
@@ -831,13 +879,11 @@ class _InventoryPageState extends State<InventoryPage> {
     );
   }
 
-
   Widget _buildHeader(bool isDesktop) {
     final user = FirebaseAuth.instance.currentUser;
     final email = user?.email ?? 'usuario@correo.com';
     String rawName = user?.displayName ?? email.split('@').first;
     String iniciales = rawName.isNotEmpty ? rawName.substring(0, 2).toUpperCase() : 'US';
-
 
     return Container(
       height: 80, padding: EdgeInsets.symmetric(horizontal: isDesktop ? 32 : 16),
@@ -855,7 +901,8 @@ class _InventoryPageState extends State<InventoryPage> {
                   Text(
                     _selectedIndex == 0 ? 'Vista General' :
                     _selectedIndex == 1 ? 'Inventario y Almacén' :
-                    _selectedIndex == 2 ? 'Punto de Venta POS' : 'Administración de Usuarios',
+                    _selectedIndex == 2 ? 'Punto de Venta POS' : 
+                    _selectedIndex == 3 ? 'Administración de Usuarios' : 'Auditoría y Seguridad',
                     style: TextStyle(fontSize: isDesktop ? 18 : 16, fontWeight: FontWeight.bold, color: _primaryDark)
                   ),
                 ],
@@ -867,7 +914,16 @@ class _InventoryPageState extends State<InventoryPage> {
               CircleAvatar(backgroundColor: _accentGreen.withOpacity(0.2), radius: 18, child: Text(iniciales, style: TextStyle(color: _accentGreen, fontWeight: FontWeight.bold, fontSize: 14))),
               if (isDesktop) ...[
                 const SizedBox(width: 12),
-                Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [Text(rawName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)), Text(email, style: TextStyle(fontSize: 11, color: Colors.grey.shade600))]),
+                Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(rawName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)), 
+                  Row(
+                    children: [
+                      Text(email, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                      const SizedBox(width: 6),
+                      Container(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2), decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(4)), child: Text(_userRole.toUpperCase(), style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.blue.shade700))),
+                    ],
+                  )
+                ]),
               ]
             ],
           )
