@@ -21,6 +21,7 @@ class _UsersPageState extends State<UsersPage> {
   final _searchController = TextEditingController();
 
   String _busquedaQuery = '';
+  String _rolSeleccionado = 'cajero'; // Rol por defecto en el formulario
 
   final Color _primaryDark = const Color(0xFF0F172A);
   final Color _accentGreen = const Color(0xFF10B981);
@@ -40,6 +41,23 @@ class _UsersPageState extends State<UsersPage> {
     _passwordController.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  // =======================================================
+  // MOTOR DE AUDITORÍA (LOGS)
+  // =======================================================
+  Future<void> _registrarLog(String modulo, String accion) async {
+    try {
+      final emailActual = _auth.currentUser?.email ?? 'Sistema';
+      await _firestore.collection('logs').add({
+        'fecha': FieldValue.serverTimestamp(),
+        'modulo': modulo,
+        'accion': accion,
+        'usuario': emailActual,
+      });
+    } catch (e) {
+      debugPrint('Error al registrar log: $e');
+    }
   }
 
   // =======================================================
@@ -71,11 +89,9 @@ class _UsersPageState extends State<UsersPage> {
     }
 
     try {
-      // 1. Crear el usuario en Firebase Authentication (La bóveda segura)
       UserCredential userCredential = await _auth
           .createUserWithEmailAndPassword(email: correo, password: password);
 
-      // 2. Guardar el "espejo" en Firestore para poder verlo en la tabla
       await _firestore
           .collection('usuarios')
           .doc(userCredential.user!.uid)
@@ -83,15 +99,22 @@ class _UsersPageState extends State<UsersPage> {
             'nombre': nombre,
             'correo': correo,
             'estado': 'Activo',
+            'rol': _rolSeleccionado,
             'fechaRegistro': FieldValue.serverTimestamp(),
             'idUsuario': userCredential.user!.uid,
           });
+
+      // ¡Registramos la acción en el Log!
+      await _registrarLog(
+        'Usuarios',
+        'Registró nuevo $_rolSeleccionado: $correo',
+      );
 
       if (!mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Usuario registrado y sincronizado exitosamente'),
+          content: Text('Usuario registrado exitosamente'),
           backgroundColor: Colors.green,
         ),
       );
@@ -101,7 +124,6 @@ class _UsersPageState extends State<UsersPage> {
         mensaje = 'Este correo ya está registrado en Firebase.';
       if (e.code == 'invalid-email')
         mensaje = 'El formato del correo es inválido.';
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(mensaje), backgroundColor: Colors.red),
       );
@@ -118,47 +140,22 @@ class _UsersPageState extends State<UsersPage> {
     String estadoActual,
   ) async {
     final String nuevoEstado = estadoActual == 'Activo' ? 'Inactivo' : 'Activo';
-
     try {
       await _firestore.collection('usuarios').doc(docId).update({
         'estado': nuevoEstado,
       });
 
-      if (!mounted) return;
+      // ¡Registramos la acción en el Log!
+      await _registrarLog(
+        'Usuarios',
+        'Cambió estado de la cuenta "$nombre" a $nuevoEstado',
+      );
 
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Row(
-            children: [
-              const Icon(Icons.info_outline, color: Colors.blueAccent),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'El estado de "$nombre" ahora es $nuevoEstado.',
-                  style: const TextStyle(color: Colors.black87),
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: Colors.white,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-            side: BorderSide(color: Colors.grey.shade300),
-          ),
-          elevation: 4,
-          margin: EdgeInsets.only(
-            bottom: MediaQuery.of(context).size.height - 100,
-            right: 20,
-            left: widget.isDesktop
-                ? MediaQuery.of(context).size.width - 400
-                : 20,
-          ),
-          action: SnackBarAction(
-            label: '✕',
-            textColor: Colors.grey,
-            onPressed: () {},
-          ),
+          content: Text('Estado de $nombre actualizado a $nuevoEstado'),
+          backgroundColor: Colors.blue,
         ),
       );
     } catch (e) {
@@ -174,6 +171,13 @@ class _UsersPageState extends State<UsersPage> {
   Future<void> _eliminarUsuario(String docId, String nombre) async {
     try {
       await _firestore.collection('usuarios').doc(docId).delete();
+
+      // ¡Registramos la acción en el Log!
+      await _registrarLog(
+        'Usuarios',
+        'Eliminó definitivamente al usuario "$nombre"',
+      );
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -195,106 +199,138 @@ class _UsersPageState extends State<UsersPage> {
     _nombreController.clear();
     _correoController.clear();
     _passwordController.clear();
+    _rolSeleccionado = 'cajero'; // Reset al abrir
 
     showDialog(
       context: context,
       builder: (BuildContext dialogContext) {
-        return Dialog(
-          backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Container(
-            width: 400,
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return Dialog(
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Container(
+                width: 400,
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: _primaryDark.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Icon(Icons.person_add_alt_1, color: _primaryDark),
-                    ),
-                    const SizedBox(width: 16),
-                    Text(
-                      'Registrar Usuario',
-                      style: TextStyle(
-                        color: _primaryDark,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                TextField(
-                  controller: _nombreController,
-                  decoration: InputDecoration(
-                    labelText: 'Nombre Completo',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: _correoController,
-                  decoration: InputDecoration(
-                    labelText: 'Correo Electrónico',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: _passwordController,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: 'Contraseña de Acceso',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 32),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(dialogContext),
-                      child: const Text(
-                        'Cancelar',
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _primaryDark,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 12,
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: _primaryDark.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            Icons.person_add_alt_1,
+                            color: _primaryDark,
+                          ),
                         ),
-                        shape: RoundedRectangleBorder(
+                        const SizedBox(width: 16),
+                        Text(
+                          'Registrar Usuario',
+                          style: TextStyle(
+                            color: _primaryDark,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    TextField(
+                      controller: _nombreController,
+                      decoration: InputDecoration(
+                        labelText: 'Nombre Completo',
+                        border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      onPressed: _registrarUsuario,
-                      child: const Text('Crear Usuario'),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _correoController,
+                      decoration: InputDecoration(
+                        labelText: 'Correo Electrónico',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _passwordController,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: 'Contraseña de Acceso',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // AQUÍ ESTÁ EL NUEVO SELECTOR DE ROL
+                    DropdownButtonFormField<String>(
+                      value: _rolSeleccionado,
+                      decoration: InputDecoration(
+                        labelText: 'Rol del Sistema',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      items: ['cajero', 'supervisor', 'administrador'].map((
+                        String rol,
+                      ) {
+                        return DropdownMenuItem<String>(
+                          value: rol,
+                          child: Text(rol.toUpperCase()),
+                        );
+                      }).toList(),
+                      onChanged: (String? nuevoRol) {
+                        setStateDialog(() {
+                          _rolSeleccionado = nuevoRol!;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 32),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialogContext),
+                          child: const Text(
+                            'Cancelar',
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _primaryDark,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 12,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          onPressed: _registrarUsuario,
+                          child: const Text('Crear Usuario'),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );
@@ -369,7 +405,6 @@ class _UsersPageState extends State<UsersPage> {
           ],
           const SizedBox(height: 24),
 
-          // Buscador sin filtro de roles
           Container(
             padding: EdgeInsets.all(widget.isDesktop ? 0 : 16),
             decoration: widget.isDesktop
@@ -382,7 +417,7 @@ class _UsersPageState extends State<UsersPage> {
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Buscar por nombre o correo electrónico...',
+                hintText: 'Buscar por nombre o correo...',
                 prefixIcon: const Icon(
                   Icons.search,
                   size: 20,
@@ -409,13 +444,10 @@ class _UsersPageState extends State<UsersPage> {
                   return const Center(child: CircularProgressIndicator());
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty)
                   return const Center(
-                    child: Text(
-                      'No hay usuarios registrados en la base de datos',
-                    ),
+                    child: Text('No hay usuarios registrados'),
                   );
 
                 var docs = snapshot.data!.docs;
-
                 docs = docs.where((doc) {
                   final data = doc.data() as Map<String, dynamic>;
                   final nombre = (data['nombre'] ?? '')
@@ -433,20 +465,21 @@ class _UsersPageState extends State<UsersPage> {
                     final double cardWidth = widget.isDesktop
                         ? (constraints.maxWidth - 24) / 2
                         : constraints.maxWidth;
-
                     return SingleChildScrollView(
                       child: Wrap(
                         spacing: 24,
                         runSpacing: 24,
-                        children: docs.map((doc) {
-                          return SizedBox(
-                            width: cardWidth,
-                            child: _buildUserCard(
-                              doc.id,
-                              doc.data() as Map<String, dynamic>,
-                            ),
-                          );
-                        }).toList(),
+                        children: docs
+                            .map(
+                              (doc) => SizedBox(
+                                width: cardWidth,
+                                child: _buildUserCard(
+                                  doc.id,
+                                  doc.data() as Map<String, dynamic>,
+                                ),
+                              ),
+                            )
+                            .toList(),
                       ),
                     );
                   },
@@ -467,6 +500,7 @@ class _UsersPageState extends State<UsersPage> {
     final correo = data['correo'] ?? 'sin@correo.com';
     final idUsuario = data['idUsuario'] ?? docId;
     final estado = data['estado'] ?? 'Activo';
+    final rol = data['rol'] ?? 'cajero';
 
     String fechaTexto = 'Sin fecha';
     if (data['fechaRegistro'] != null) {
@@ -563,13 +597,32 @@ class _UsersPageState extends State<UsersPage> {
                         ),
                       ],
                     ),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade50,
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Colors.blue.shade200),
+                      ),
+                      child: Text(
+                        rol.toUpperCase(),
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue.shade800,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
             ],
           ),
           const SizedBox(height: 24),
-
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -615,7 +668,6 @@ class _UsersPageState extends State<UsersPage> {
             padding: EdgeInsets.symmetric(vertical: 16),
             child: Divider(height: 1),
           ),
-
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
