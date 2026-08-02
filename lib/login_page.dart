@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart'; // IMPORTANTE: Agregado para leer Firestore
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'inventory_page.dart';
 
 
@@ -19,7 +19,6 @@ class _LoginPageState extends State<LoginPage> {
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
   bool _isLoading = false;
-  bool _isLogin = true;
 
 
   final Color _primaryDark = const Color(0xFF0F172A);
@@ -280,21 +279,12 @@ class _LoginPageState extends State<LoginPage> {
                     CircleAvatar(radius: 36, backgroundColor: _accentGreen.withOpacity(0.1), child: Icon(Icons.person, size: 40, color: _accentGreen)),
                     const SizedBox(height: 16),
                     Text('Bienvenido de nuevo', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: _primaryDark)),
+                    const SizedBox(height: 8),
+                    Text('Ingresa tus credenciales para continuar', style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
                   ],
                 ),
               ),
-              const SizedBox(height: 24),
-              Container(
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(12)),
-                child: Row(
-                  children: [
-                    Expanded(child: _buildTabButton('Iniciar Sesión', _isLogin, true)),
-                    Expanded(child: _buildTabButton('Crear Cuenta', !_isLogin, false)),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 32), // Ajustamos el espaciado ya que quitamos los botones
               const Text('Correo Electrónico', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               TextFormField(
@@ -358,23 +348,6 @@ class _LoginPageState extends State<LoginPage> {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-
-  Widget _buildTabButton(String text, bool isActive, bool isLoginTab) {
-    return GestureDetector(
-      onTap: () => setState(() => _isLogin = isLoginTab),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: isActive ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: isActive ? [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))] : null,
-        ),
-        alignment: Alignment.center,
-        child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isActive ? Colors.black87 : Colors.grey.shade600)),
       ),
     );
   }
