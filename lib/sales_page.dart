@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:html' as html; // <-- AGREGADO PARA HABILITAR LA IMPRESIÓN WEB
 
 
 class SalesPage extends StatefulWidget {
@@ -199,18 +200,71 @@ class _SalesPageState extends State<SalesPage> {
   }
 
 
+  // --- MATEMÁTICA CON IVA INCLUIDO ---
   double get _subtotalCarrito => _carrito.fold(0, (sum, item) => sum + (item['precio'] * item['cantidadCarrito']));
-  double get _ivaCarrito => _subtotalCarrito * 0.16;
-  double get _totalCarrito => _subtotalCarrito + _ivaCarrito;
+  double get _ivaCarrito => 0.0; // Se ajusta a 0 para no cobrar doble
+  double get _totalCarrito => _subtotalCarrito; // El total es el mismo precio que ve el cliente
 
 
   // =======================================================
-  // PROCESAMIENTO DE TRANSACCIONES (BATCH)
+  // PROCESAMIENTO DE TRANSACCIONES (BATCH Y ANIMACIÓN)
   // =======================================================
-  Future<void> _procesarVenta() async {
+  Future<void> _procesarVentaConAnimacion() async {
     if (_carrito.isEmpty) return;
 
 
+    // Si es con Tarjeta, mostramos la animación de la terminal
+    if (_metodoPago == 'Tarjeta') {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          return FutureBuilder(
+            future: Future.delayed(const Duration(seconds: 2)), // Simula los 2 segundos de conexión al banco
+            builder: (context, snapshot) {
+              final isDone = snapshot.connectionState == ConnectionState.done;
+              return Dialog(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                child: Padding(
+                  padding: const EdgeInsets.all(32.0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      isDone
+                          ? const Icon(Icons.check_circle, color: Colors.green, size: 64)
+                          : const CircularProgressIndicator(color: Colors.blue),
+                      const SizedBox(height: 24),
+                      Text(
+                        isDone ? 'Pago Aprobado' : 'Procesando terminal...',
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        isDone ? 'Retire la tarjeta' : 'No retire la tarjeta',
+                        style: const TextStyle(color: Colors.grey, fontSize: 13),
+                      )
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        }
+      );
+     
+      // Esperamos 3 segundos en total (2 procesando + 1 para que vea la palomita verde)
+      await Future.delayed(const Duration(seconds: 3));
+      if (mounted) Navigator.pop(context); // Cerramos la animación
+    }
+
+
+    // Procedemos a guardar todo en la base de datos
+    await _procesarVenta();
+  }
+
+
+  Future<void> _procesarVenta() async {
     final String folio = 'SALE-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}';
    
     List<Map<String, dynamic>> itemsVenta = _carrito.map((item) => {
@@ -248,7 +302,6 @@ class _SalesPageState extends State<SalesPage> {
 
       await batch.commit();
      
-      // ¡AQUÍ ESTÁ LA MAGIA! Registramos la venta en el Log
       await _registrarLog('Ventas', 'Procesó venta folio $folio por ${_formatearMoneda(_totalCarrito)}');
 
 
@@ -317,10 +370,13 @@ class _SalesPageState extends State<SalesPage> {
                 ),
               )).toList(),
               const Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Divider()),
+             
+              // TICKET CON IMPUESTOS INCLUIDOS
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Subtotal', style: TextStyle(fontSize: 12)), Text(_formatearMoneda(sub), style: const TextStyle(fontSize: 12))]),
               const SizedBox(height: 8),
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('IVA (16%)', style: TextStyle(fontSize: 12)), Text(_formatearMoneda(iva), style: const TextStyle(fontSize: 12))]),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('IVA', style: TextStyle(fontSize: 12)), const Text('Incluido', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green))]),
               const SizedBox(height: 16),
+             
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('Total Pagado', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: _primaryDark)), Text(_formatearMoneda(total), style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _primaryDark))]),
               const SizedBox(height: 16),
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('MÉTODO DE PAGO', style: TextStyle(fontSize: 10, color: Colors.grey)), Text(metodo.toUpperCase(), style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: _primaryDark))]),
@@ -328,9 +384,22 @@ class _SalesPageState extends State<SalesPage> {
              
               Row(
                 children: [
-                  Expanded(child: OutlinedButton(onPressed: () {}, style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), side: BorderSide(color: _primaryDark), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))), child: Text('Imprimir', style: TextStyle(color: _primaryDark)))),
+                  Expanded(
+                    child: OutlinedButton(
+                      // AQUÍ HACEMOS LA MAGIA DE LA IMPRESIÓN WEB
+                      onPressed: () => html.window.print(),
+                      style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), side: BorderSide(color: _primaryDark), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                      child: Text('Imprimir', style: TextStyle(color: _primaryDark))
+                    )
+                  ),
                   const SizedBox(width: 16),
-                  Expanded(child: ElevatedButton(onPressed: () => Navigator.pop(context), style: ElevatedButton.styleFrom(backgroundColor: _primaryDark, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))), child: const Text('Aceptar'))),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: ElevatedButton.styleFrom(backgroundColor: _primaryDark, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                      child: const Text('Aceptar')
+                    )
+                  ),
                 ],
               )
             ],
@@ -648,9 +717,10 @@ class _SalesPageState extends State<SalesPage> {
           decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(bottom: Radius.circular(16))),
           child: Column(
             children: [
+              // ACTUALIZACIÓN VISUAL DEL IVA EN EL CARRITO
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Subtotal', style: TextStyle(fontSize: 12)), Text(_formatearMoneda(_subtotalCarrito), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold))]),
               const SizedBox(height: 4),
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('IVA (16%)', style: TextStyle(fontSize: 12)), Text(_formatearMoneda(_ivaCarrito), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold))]),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('IVA', style: TextStyle(fontSize: 12)), const Text('Incluido en el precio', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green))]),
              
               const SizedBox(height: 4),
               Row(
@@ -694,7 +764,8 @@ class _SalesPageState extends State<SalesPage> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _carrito.isEmpty ? null : _procesarVenta,
+                  // VINCULAMOS AL NUEVO FLUJO ANIMADO
+                  onPressed: _carrito.isEmpty ? null : _procesarVentaConAnimacion,
                   style: ElevatedButton.styleFrom(backgroundColor: _primaryDark, disabledBackgroundColor: Colors.grey.shade300, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
                   child: const Text('Finalizar Venta', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
                 ),
@@ -748,7 +819,7 @@ class _SalesPageState extends State<SalesPage> {
         const SizedBox(height: 24),
 
 
-        // Buscador y Controladores de Filtros (REMOVIDO SHOPIFY)
+        // Buscador y Controladores de Filtros
         Container(
           padding: EdgeInsets.all(isDesktop ? 0 : 16),
           decoration: isDesktop ? null : BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey.shade200)),
