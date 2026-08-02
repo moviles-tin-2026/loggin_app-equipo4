@@ -10,7 +10,7 @@ import 'login_page.dart';
 import 'sales_page.dart';
 import 'users_page.dart';
 import 'logs_page.dart';
-import 'dashboard_page.dart'; // <--- LA NUEVA VISTA GENERAL
+import 'dashboard_page.dart';
 
 class InventoryPage extends StatefulWidget {
   const InventoryPage({super.key});
@@ -21,7 +21,7 @@ class InventoryPage extends StatefulWidget {
 
 class _InventoryPageState extends State<InventoryPage> {
   // VARIABLES DE SEGURIDAD (ROLES)
-  String _userRole = 'cajero'; // Por defecto el más restrictivo
+  String _userRole = 'cajero'; 
   bool _isLoadingRole = true;
 
   // CONTROLADORES INVENTARIO
@@ -47,8 +47,7 @@ class _InventoryPageState extends State<InventoryPage> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
   
-  // AHORA ARRANCA EN 0 (VISTA GENERAL)
-  int _selectedIndex = 0;
+  int _selectedIndex = 0; // 0: Dashboard, 1: Inventario, 2: Ventas, 3: Usuarios, 4: Logs
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
@@ -66,9 +65,6 @@ class _InventoryPageState extends State<InventoryPage> {
     });
   }
 
-  // =======================================================
-  // SEGURIDAD: CARGAR EL ROL DESDE FIRESTORE
-  // =======================================================
   Future<void> _cargarRolUsuario() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
@@ -88,9 +84,6 @@ class _InventoryPageState extends State<InventoryPage> {
     }
   }
 
-  // =======================================================
-  // MOTOR DE AUDITORÍA (LOGS)
-  // =======================================================
   Future<void> _registrarLog(String modulo, String accion) async {
     try {
       final emailActual = FirebaseAuth.instance.currentUser?.email ?? 'Sistema';
@@ -121,6 +114,141 @@ class _InventoryPageState extends State<InventoryPage> {
     RegExp reg = RegExp(r'\B(?=(\d{3})+(?!\d))');
     partes[0] = partes[0].replaceAll(reg, ',');
     return '\$${partes.join('.')}';
+  }
+
+  // =======================================================
+  // ALERTAS DE STOCK (Cajero -> Supervisor -> Admin)
+  // =======================================================
+  Future<void> _avisarFaltaStock(String productoId, String nombreProducto) async {
+    try {
+      await _firestore.collection('alertas_stock').add({
+        'productoId': productoId,
+        'nombreProducto': nombreProducto,
+        'estado': 'sin_stock',
+        'fecha_alerta': FieldValue.serverTimestamp(),
+      });
+      await _registrarLog('Inventario', 'Cajero reportó falta de stock para: $nombreProducto');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Alerta enviada al supervisor: Sin stock'), backgroundColor: Colors.orange)
+        );
+      }
+    } catch (e) {
+      debugPrint("Error al enviar alerta: $e");
+    }
+  }
+
+  Future<void> _pedirAlDistribuidor(String productoId, String nombreProducto) async {
+    try {
+      final query = await _firestore.collection('alertas_stock')
+          .where('productoId', isEqualTo: productoId)
+          .where('estado', isEqualTo: 'sin_stock')
+          .get();
+      
+      if (query.docs.isNotEmpty) {
+        for (var doc in query.docs) {
+          await doc.reference.update({
+            'estado': 'pedido_distribuidor',
+            'fecha_pedido': FieldValue.serverTimestamp(),
+          });
+        }
+        await _registrarLog('Inventario', 'Supervisor solicitó stock al distribuidor para: $nombreProducto');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Orden de compra enviada con éxito'), backgroundColor: Colors.blue)
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No hay reportes de cajeros para este producto'), backgroundColor: Colors.grey)
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint("Error al pedir stock: $e");
+    }
+  }
+
+  Future<void> _confirmarStock(String productoId, String nombreProducto, int cantidadRecibida) async {
+    try {
+      final query = await _firestore.collection('alertas_stock')
+          .where('productoId', isEqualTo: productoId)
+          .where('estado', isEqualTo: 'pedido_distribuidor')
+          .get();
+
+      if (query.docs.isNotEmpty) {
+        for (var doc in query.docs) {
+          await doc.reference.update({
+            'estado': 'confirmado',
+            'fecha_confirmacion': FieldValue.serverTimestamp(),
+          });
+        }
+        
+        await _firestore.collection('inventarios').doc(productoId).update({
+          'cantidad': FieldValue.increment(cantidadRecibida),
+        });
+        
+        await _registrarLog('Inventario', 'Administrador confirmó recepción de $cantidadRecibida uds para: $nombreProducto');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Stock confirmado y $cantidadRecibida uds añadidas al inventario'), backgroundColor: Colors.green)
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No hay pedidos pendientes al distribuidor para confirmar'), backgroundColor: Colors.grey)
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint("Error al confirmar stock: $e");
+    }
+  }
+
+  // =======================================================
+  // ORDEN DE COMPRA (DISEÑO PROFESIONAL)
+  // =======================================================
+  void _mostrarOrdenCompra(String productoId, String nombreProducto) {
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              Icon(Icons.corporate_fare, color: Colors.blue.shade700),
+              const SizedBox(width: 12),
+              const Text('Orden de Reabastecimiento', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Proveedor Autorizado: Distribuidora Central S.A. de C.V.', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
+              const SizedBox(height: 16),
+              Text('Se enviará una solicitud formal para reabastecer el producto:\n\n"$nombreProducto"'),
+              const SizedBox(height: 16),
+              const Text('Esta acción notificará al Administrador para que espere la recepción en almacén.', style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancelar Operación', style: TextStyle(color: Colors.grey))),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade700, foregroundColor: Colors.white),
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                _pedirAlDistribuidor(productoId, nombreProducto);
+              },
+              icon: const Icon(Icons.send, size: 16),
+              label: const Text('Autorizar y Enviar'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   // =======================================================
@@ -314,6 +442,74 @@ class _InventoryPageState extends State<InventoryPage> {
   }
 
   // =======================================================
+  // BUZÓN DE MENSAJES
+  // =======================================================
+  void _mostrarBuzonMensajes() {
+    final String estadoBuscado = (_userRole == 'supervisor') ? 'sin_stock' : 'pedido_distribuidor';
+    final String tituloBuzon = (_userRole == 'supervisor') ? 'Mensajes de Cajeros' : 'Órdenes en Tránsito';
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.all(24),
+          height: 400,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.mark_email_unread_outlined, color: Colors.indigo),
+                  const SizedBox(width: 12),
+                  Text(tituloBuzon, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              const Divider(height: 32),
+              Expanded(
+                child: StreamBuilder<QuerySnapshot>(
+                  stream: _firestore.collection('alertas_stock').where('estado', isEqualTo: estadoBuscado).snapshots(),
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                    
+                    if (snapshot.data!.docs.isEmpty) {
+                      return const Center(child: Text('No hay mensajes nuevos.', style: TextStyle(color: Colors.grey)));
+                    }
+
+                    return ListView.builder(
+                      itemCount: snapshot.data!.docs.length,
+                      itemBuilder: (context, index) {
+                        final data = snapshot.data!.docs[index].data() as Map<String, dynamic>;
+                        return Card(
+                          elevation: 0,
+                          color: Colors.indigo.shade50,
+                          child: ListTile(
+                            leading: Icon(
+                              _userRole == 'supervisor' ? Icons.warning_amber_rounded : Icons.local_shipping,
+                              color: _userRole == 'supervisor' ? Colors.orange : Colors.blue,
+                            ),
+                            title: Text(data['nombreProducto'] ?? 'Producto Desconocido', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                            subtitle: Text(
+                              _userRole == 'supervisor' 
+                                ? 'Cajero reportó falta de existencias en mostrador.' 
+                                : 'Supervisor generó orden de compra al distribuidor.',
+                              style: const TextStyle(fontSize: 12)
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // =======================================================
   // ESTRUCTURA BASE DE LA PANTALLA (SIDEBAR Y HEADER)
   // =======================================================
   @override
@@ -336,263 +532,341 @@ class _InventoryPageState extends State<InventoryPage> {
   }
 
   Widget _buildBodyContent(bool isDesktop) {
-    // AQUÍ REEMPLAZAMOS EL TEXTO POR LA VISTA DE DASHBOARD
     if (_selectedIndex == 0) return DashboardPage(isDesktop: isDesktop, userRole: _userRole);
-    
     if (_selectedIndex == 1) return _buildInventoryView(isDesktop);
     if (_selectedIndex == 2) return SalesPage(isDesktop: isDesktop);
-    
-    // Solo el Admin puede ver la pantalla de usuarios y Logs
     if (_selectedIndex == 3 && _userRole == 'administrador') return UsersPage(isDesktop: isDesktop);
     if (_selectedIndex == 4 && _userRole == 'administrador') return LogsPage(isDesktop: isDesktop);
-    
     return Container();
   }
 
   // -------------------------------------------------------
-  // VISTA INVENTARIO
+  // VISTA INVENTARIO (CORREGIDA PARA SCROLL MÓVIL)
   // -------------------------------------------------------
   Widget _buildInventoryView(bool isDesktop) {
-    return Padding(
-      padding: EdgeInsets.all(isDesktop ? 32.0 : 16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (isDesktop)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    // 1. Extraemos la lista de productos para controlarla independientemente
+    Widget listaProductos = Container(
+      decoration: isDesktop ? BoxDecoration(
+        color: Colors.white,
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))]
+      ) : null,
+      child: StreamBuilder<QuerySnapshot>(
+        stream: _firestore.collection('inventarios').orderBy('fechaCreacion', descending: true).snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) return const Center(child: Text('Error al cargar datos'));
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+          
+          var docs = snapshot.data!.docs;
+          
+          docs = docs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            final String nombreProducto = (data['nombre'] ?? '').toString().toLowerCase();
+            
+            bool cumpleFiltro = true;
+            if (_filtroActual == 'Bajo stock') {
+              final int cant = data['cantidad'] ?? 0;
+              final int min = data['stockMinimo'] ?? 0;
+              cumpleFiltro = cant <= min;
+            } else if (_filtroActual != 'Todos') {
+              final String cat = data['categoria'] ?? '';
+              cumpleFiltro = cat == _filtroActual;
+            }
+            bool cumpleBusqueda = nombreProducto.contains(_busquedaQuery);
+            return cumpleFiltro && cumpleBusqueda;
+          }).toList();
+          
+          if (docs.isEmpty) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text('Control de Existencias e Inventario', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: _primaryDark)),
-                    const SizedBox(height: 4),
-                    const Text('Agrega productos, edita existencias y gestiona alertas.', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                    Icon(Icons.search_off, size: 48, color: Colors.grey.shade400),
+                    const SizedBox(height: 16),
+                    const Text('No se encontraron productos', style: TextStyle(color: Colors.grey)),
                   ],
                 ),
-                if (_userRole != 'cajero')
-                  ElevatedButton.icon(
-                    onPressed: () => _mostrarFormularioProducto(),
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('Añadir Nuevo Producto'),
-                    style: ElevatedButton.styleFrom(backgroundColor: _accentGreen, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-                  ),
-              ],
-            )
-          else
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Control de Existencias e\nInventario', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: _primaryDark)),
-                const SizedBox(height: 8),
-                const Text('Agrega productos, edita existencias en tiempo real y gestiona alertas.', style: TextStyle(color: Colors.grey, fontSize: 13)),
-                
-                if (_userRole != 'cajero') ...[
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
+              ),
+            );
+          }
+
+          return ListView.separated(
+            // --- MAGIA PARA MÓVILES AQUÍ ---
+            shrinkWrap: !isDesktop, 
+            physics: isDesktop ? const AlwaysScrollableScrollPhysics() : const NeverScrollableScrollPhysics(),
+            // -------------------------------
+            padding: EdgeInsets.symmetric(horizontal: isDesktop ? 24.0 : 0, vertical: 8.0),
+            itemCount: docs.length,
+            separatorBuilder: (context, index) => isDesktop ? const Divider() : const SizedBox(height: 16),
+            itemBuilder: (context, index) {
+              final doc = docs[index];
+              final data = doc.data() as Map<String, dynamic>;
+              final docId = doc.id;
+              return isDesktop ? _buildProductRow(data, docId) : _buildProductCardMobile(data, docId);
+            },
+          );
+        },
+      ),
+    );
+
+    // 2. Extraemos el cuerpo principal
+    Widget mainColumn = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (isDesktop)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Control de Existencias e Inventario', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: _primaryDark)),
+                  const SizedBox(height: 4),
+                  const Text('Agrega productos, edita existencias y gestiona alertas.', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                ],
+              ),
+              if (_userRole != 'cajero')
+                Row(
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: () => _mostrarBuzonMensajes(),
+                      icon: const Icon(Icons.mail_outline, size: 18),
+                      label: const Text('Buzón'),
+                      style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                    ),
+                    const SizedBox(width: 12),
+                    ElevatedButton.icon(
                       onPressed: () => _mostrarFormularioProducto(),
                       icon: const Icon(Icons.add, size: 18),
                       label: const Text('Añadir Nuevo Producto'),
-                      style: ElevatedButton.styleFrom(backgroundColor: _accentGreen, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                      style: ElevatedButton.styleFrom(backgroundColor: _accentGreen, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
                     ),
-                  ),
-                ],
-              ],
-            ),
-          
-          const SizedBox(height: 24),
-
-          StreamBuilder<QuerySnapshot>(
-            stream: _firestore.collection('inventarios').snapshots(),
-            builder: (context, snapshot) {
-              if (!snapshot.hasData) return const SizedBox();
+                  ],
+                ),
+            ],
+          )
+        else
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Control de Existencias e\nInventario', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: _primaryDark)),
+              const SizedBox(height: 8),
+              const Text('Agrega productos, edita existencias en tiempo real y gestiona alertas.', style: TextStyle(color: Colors.grey, fontSize: 13)),
               
-              double valorTotal = 0;
-              int unidadesTotales = 0;
-              int catalogoActivo = snapshot.data!.docs.length;
-              int alertasStock = 0;
-
-              for (var doc in snapshot.data!.docs) {
-                final data = doc.data() as Map<String, dynamic>;
-                final int cantidad = data['cantidad'] ?? 0;
-                final double precio = (data['precio'] ?? 0).toDouble();
-                final int stockMinimo = data['stockMinimo'] ?? 0;
-
-                valorTotal += (cantidad * precio);
-                unidadesTotales += cantidad;
-                if (cantidad <= stockMinimo) {
-                  alertasStock++;
-                }
-              }
-
-              return Column(
-                children: [
-                  if (isDesktop)
-                    Row(
-                      children: [
-                        Expanded(child: _buildKPICard(icon: Icons.attach_money, iconColor: _accentGreen, bgColor: _accentGreen.withOpacity(0.1), title: 'VALOR DE INVENTARIO', value: _formatearMoneda(valorTotal), subtitle: 'Pesos Mexicanos (MXN)', isDesktop: isDesktop)),
-                        const SizedBox(width: 16),
-                        Expanded(child: _buildKPICard(icon: Icons.widgets_outlined, iconColor: _primaryDark, bgColor: _primaryDark.withOpacity(0.05), title: 'UNIDADES FÍSICAS', value: '$unidadesTotales pzs', subtitle: 'Total de existencias en bodega', isDesktop: isDesktop)),
-                        const SizedBox(width: 16),
-                        Expanded(child: _buildKPICard(icon: Icons.inventory_2_outlined, iconColor: _primaryDark, bgColor: _primaryDark.withOpacity(0.05), title: 'CATÁLOGO ACTIVO', value: '$catalogoActivo items', subtitle: 'Productos registrados únicos', isDesktop: isDesktop)),
-                        const SizedBox(width: 16),
-                        Expanded(child: _buildKPICard(icon: Icons.warning_amber_rounded, iconColor: Colors.red.shade600, bgColor: Colors.red.withOpacity(0.1), title: 'ALERTAS DE STOCK', value: '$alertasStock bajos', subtitle: 'Requiere reabastecimiento urgente', isDesktop: isDesktop)),
-                      ],
-                    )
-                  else
-                    Column(
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(child: _buildKPICard(icon: Icons.attach_money, iconColor: _accentGreen, bgColor: _accentGreen.withOpacity(0.1), title: 'VALOR TOTAL', value: _formatearMoneda(valorTotal), subtitle: 'En MXN', isDesktop: isDesktop)),
-                            const SizedBox(width: 12),
-                            Expanded(child: _buildKPICard(icon: Icons.widgets_outlined, iconColor: _primaryDark, bgColor: _primaryDark.withOpacity(0.05), title: 'UNIDADES', value: '$unidadesTotales pzs', subtitle: 'En bodega', isDesktop: isDesktop)),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(child: _buildKPICard(icon: Icons.inventory_2_outlined, iconColor: _primaryDark, bgColor: _primaryDark.withOpacity(0.05), title: 'CATÁLOGO', value: '$catalogoActivo items', subtitle: 'Registrados', isDesktop: isDesktop)),
-                            const SizedBox(width: 12),
-                            Expanded(child: _buildKPICard(icon: Icons.warning_amber_rounded, iconColor: Colors.red.shade600, bgColor: Colors.red.withOpacity(0.1), title: 'ALERTAS', value: '$alertasStock bajos', subtitle: 'Reabastecer', isDesktop: isDesktop)),
-                          ],
-                        ),
-                      ],
+              if (_userRole != 'cajero') ...[
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _mostrarBuzonMensajes(),
+                        icon: const Icon(Icons.mail_outline, size: 18),
+                        label: const Text('Buzón'),
+                        style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                      ),
                     ),
-                  const SizedBox(height: 24),
-                ],
-              );
-            },
-          ),
-
-          Container(
-            padding: EdgeInsets.all(isDesktop ? 0 : 16),
-            decoration: isDesktop ? null : BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey.shade200)
-            ),
-            child: Flex(
-              direction: isDesktop ? Axis.horizontal : Axis.vertical,
-              children: [
-                Container(
-                  width: isDesktop ? 300 : double.infinity,
-                  margin: EdgeInsets.only(bottom: isDesktop ? 0 : 16, right: isDesktop ? 16 : 0),
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      hintText: 'Buscar por nombre...',
-                      hintStyle: const TextStyle(fontSize: 13),
-                      prefixIcon: const Icon(Icons.search, size: 20, color: Colors.grey),
-                      suffixIcon: _busquedaQuery.isNotEmpty
-                          ? IconButton(icon: const Icon(Icons.clear, size: 18), onPressed: () => _searchController.clear())
-                          : null,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
-                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
-                      contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () => _mostrarFormularioProducto(),
+                        icon: const Icon(Icons.add, size: 18),
+                        label: const Text('Añadir'),
+                        style: ElevatedButton.styleFrom(backgroundColor: _accentGreen, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                      ),
                     ),
-                  ),
-                ),
-                Expanded(
-                  flex: isDesktop ? 1 : 0,
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        _buildFilterPill('Todos'),
-                        _buildFilterPill('Bajo stock'),
-                        ..._categorias.map((c) => _buildFilterPill(c)),
-                      ],
-                    ),
-                  ),
+                  ],
                 ),
               ],
-            ),
+            ],
           ),
-          const SizedBox(height: 24),
-          
-          if (isDesktop) ...[
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-              decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
-              child: Row(
-                children: const [
-                  Expanded(flex: 4, child: Text('PRODUCTO / MARCA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey))),
-                  Expanded(flex: 2, child: Text('CATEGORÍA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey))),
-                  Expanded(flex: 2, child: Text('PRECIO (MXN)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey))),
-                  Expanded(flex: 3, child: Text('INVENTARIO', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey))),
-                  SizedBox(width: 80, child: Text('ACCIONES', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey))),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-          ],
+        
+        const SizedBox(height: 24),
 
-          Expanded(
-            child: Container(
-              decoration: isDesktop ? BoxDecoration(
-                color: Colors.white,
-                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
-                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))]
-              ) : null,
-              child: StreamBuilder<QuerySnapshot>(
-                stream: _firestore.collection('inventarios').orderBy('fechaCreacion', descending: true).snapshots(),
-                builder: (context, snapshot) {
-                  if (snapshot.hasError) return const Center(child: Text('Error al cargar datos'));
-                  if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                  
-                  var docs = snapshot.data!.docs;
-                  
-                  docs = docs.where((doc) {
-                    final data = doc.data() as Map<String, dynamic>;
-                    final String nombreProducto = (data['nombre'] ?? '').toString().toLowerCase();
-                    
-                    bool cumpleFiltro = true;
-                    if (_filtroActual == 'Bajo stock') {
-                      final int cant = data['cantidad'] ?? 0;
-                      final int min = data['stockMinimo'] ?? 0;
-                      cumpleFiltro = cant <= min;
-                    } else if (_filtroActual != 'Todos') {
-                      final String cat = data['categoria'] ?? '';
-                      cumpleFiltro = cat == _filtroActual;
-                    }
-                    bool cumpleBusqueda = nombreProducto.contains(_busquedaQuery);
-                    return cumpleFiltro && cumpleBusqueda;
-                  }).toList();
-                  
-                  if (docs.isEmpty) {
-                    return Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+        StreamBuilder<QuerySnapshot>(
+          stream: _firestore.collection('inventarios').snapshots(),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) return const SizedBox();
+            
+            double valorTotal = 0;
+            int unidadesTotales = 0;
+            int catalogoActivo = snapshot.data!.docs.length;
+            int alertasStock = 0;
+
+            for (var doc in snapshot.data!.docs) {
+              final data = doc.data() as Map<String, dynamic>;
+              final int cantidad = data['cantidad'] ?? 0;
+              final double precio = (data['precio'] ?? 0).toDouble();
+              final int stockMinimo = data['stockMinimo'] ?? 0;
+
+              valorTotal += (cantidad * precio);
+              unidadesTotales += cantidad;
+              if (cantidad <= stockMinimo) {
+                alertasStock++;
+              }
+            }
+
+            return Column(
+              children: [
+                if (isDesktop)
+                  Row(
+                    children: [
+                      Expanded(child: _buildKPICard(icon: Icons.attach_money, iconColor: _accentGreen, bgColor: _accentGreen.withOpacity(0.1), title: 'VALOR DE INVENTARIO', value: _formatearMoneda(valorTotal), subtitle: 'Pesos Mexicanos (MXN)', isDesktop: isDesktop)),
+                      const SizedBox(width: 16),
+                      Expanded(child: _buildKPICard(icon: Icons.widgets_outlined, iconColor: _primaryDark, bgColor: _primaryDark.withOpacity(0.05), title: 'UNIDADES FÍSICAS', value: '$unidadesTotales pzs', subtitle: 'Total de existencias en bodega', isDesktop: isDesktop)),
+                      const SizedBox(width: 16),
+                      Expanded(child: _buildKPICard(icon: Icons.inventory_2_outlined, iconColor: _primaryDark, bgColor: _primaryDark.withOpacity(0.05), title: 'CATÁLOGO ACTIVO', value: '$catalogoActivo items', subtitle: 'Productos registrados únicos', isDesktop: isDesktop)),
+                      const SizedBox(width: 16),
+                      Expanded(child: _buildKPICard(icon: Icons.warning_amber_rounded, iconColor: Colors.red.shade600, bgColor: Colors.red.withOpacity(0.1), title: 'ALERTAS DE STOCK', value: '$alertasStock bajos', subtitle: 'Requiere reabastecimiento urgente', isDesktop: isDesktop)),
+                    ],
+                  )
+                else
+                  Column(
+                    children: [
+                      Row(
                         children: [
-                          Icon(Icons.search_off, size: 48, color: Colors.grey.shade400),
-                          const SizedBox(height: 16),
-                          const Text('No se encontraron productos', style: TextStyle(color: Colors.grey)),
+                          Expanded(child: _buildKPICard(icon: Icons.attach_money, iconColor: _accentGreen, bgColor: _accentGreen.withOpacity(0.1), title: 'VALOR TOTAL', value: _formatearMoneda(valorTotal), subtitle: 'En MXN', isDesktop: isDesktop)),
+                          const SizedBox(width: 12),
+                          Expanded(child: _buildKPICard(icon: Icons.widgets_outlined, iconColor: _primaryDark, bgColor: _primaryDark.withOpacity(0.05), title: 'UNIDADES', value: '$unidadesTotales pzs', subtitle: 'En bodega', isDesktop: isDesktop)),
                         ],
                       ),
-                    );
-                  }
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(child: _buildKPICard(icon: Icons.inventory_2_outlined, iconColor: _primaryDark, bgColor: _primaryDark.withOpacity(0.05), title: 'CATÁLOGO', value: '$catalogoActivo items', subtitle: 'Registrados', isDesktop: isDesktop)),
+                          const SizedBox(width: 12),
+                          Expanded(child: _buildKPICard(icon: Icons.warning_amber_rounded, iconColor: Colors.red.shade600, bgColor: Colors.red.withOpacity(0.1), title: 'ALERTAS', value: '$alertasStock bajos', subtitle: 'Reabastecer', isDesktop: isDesktop)),
+                        ],
+                      ),
+                    ],
+                  ),
+                const SizedBox(height: 24),
+              ],
+            );
+          },
+        ),
 
-                  return ListView.separated(
-                    padding: EdgeInsets.symmetric(horizontal: isDesktop ? 24.0 : 0, vertical: 8.0),
-                    itemCount: docs.length,
-                    separatorBuilder: (context, index) => isDesktop ? const Divider() : const SizedBox(height: 16),
-                    itemBuilder: (context, index) {
-                      final doc = docs[index];
-                      final data = doc.data() as Map<String, dynamic>;
-                      final docId = doc.id;
-                      return isDesktop ? _buildProductRow(data, docId) : _buildProductCardMobile(data, docId);
-                    },
-                  );
-                },
+        Container(
+          padding: EdgeInsets.all(isDesktop ? 0 : 16),
+          decoration: isDesktop ? null : BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey.shade200)
+          ),
+          child: Flex(
+            direction: isDesktop ? Axis.horizontal : Axis.vertical,
+            children: [
+              Container(
+                width: isDesktop ? 300 : double.infinity,
+                margin: EdgeInsets.only(bottom: isDesktop ? 0 : 16, right: isDesktop ? 16 : 0),
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Buscar por nombre...',
+                    hintStyle: const TextStyle(fontSize: 13),
+                    prefixIcon: const Icon(Icons.search, size: 20, color: Colors.grey),
+                    suffixIcon: _busquedaQuery.isNotEmpty
+                        ? IconButton(icon: const Icon(Icons.clear, size: 18), onPressed: () => _searchController.clear())
+                        : null,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
+                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                  ),
+                ),
               ),
+              Expanded(
+                flex: isDesktop ? 1 : 0,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _buildFilterPill('Todos'),
+                      _buildFilterPill('Bajo stock'),
+                      ..._categorias.map((c) => _buildFilterPill(c)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        
+        if (isDesktop) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+            decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
+            child: Row(
+              children: const [
+                Expanded(flex: 4, child: Text('PRODUCTO / MARCA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey))),
+                Expanded(flex: 2, child: Text('CATEGORÍA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey))),
+                Expanded(flex: 2, child: Text('PRECIO (MXN)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey))),
+                Expanded(flex: 3, child: Text('INVENTARIO', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey))),
+                SizedBox(width: 80, child: Text('ACCIONES', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey))),
+              ],
             ),
           ),
+          const Divider(height: 1),
         ],
-      ),
+
+        // 3. AQUÍ HACEMOS EL PUENTE: 
+        // Si es escritorio mantenemos el Expanded para que tenga su propio scroll local.
+        // Si es móvil lo pintamos normal para que el SingleChildScrollView externo tome el control.
+        if (isDesktop)
+          Expanded(child: listaProductos)
+        else
+          listaProductos,
+      ],
     );
+
+    // 4. RETORNO FINAL DINÁMICO
+    return Padding(
+      padding: EdgeInsets.all(isDesktop ? 32.0 : 16.0),
+      child: isDesktop 
+          ? mainColumn 
+          : SingleChildScrollView(child: mainColumn), // Scroll total en móvil
+    );
+  }
+
+  // =======================================================
+  // COMPONENTE DE BOTONES DE ALERTA DINÁMICOS POR ROL
+  // =======================================================
+  Widget _buildAlertButtons(String docId, String nombre, bool bajoStock) {
+    if (!bajoStock) return const SizedBox();
+
+    if (_userRole == 'cajero') {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8.0),
+        child: ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white, minimumSize: const Size(double.infinity, 36)),
+          icon: const Icon(Icons.warning_amber_rounded, size: 16),
+          label: const Text('Notificar Falta de Stock', style: TextStyle(fontSize: 12)),
+          onPressed: () => _avisarFaltaStock(docId, nombre),
+        ),
+      );
+    } else if (_userRole == 'supervisor') {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8.0),
+        child: ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade700, foregroundColor: Colors.white, minimumSize: const Size(double.infinity, 36)),
+          icon: const Icon(Icons.request_quote_outlined, size: 16),
+          label: const Text('Generar Orden de Compra', style: TextStyle(fontSize: 12)),
+          onPressed: () => _mostrarOrdenCompra(docId, nombre),
+        ),
+      );
+    } else if (_userRole == 'administrador' || _userRole == 'admin') {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8.0),
+        child: ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white, minimumSize: const Size(double.infinity, 36)),
+          icon: const Icon(Icons.local_shipping, size: 16),
+          label: const Text('Registrar Entrada (10 uds)', style: TextStyle(fontSize: 12)),
+          onPressed: () => _confirmarStock(docId, nombre, 10),
+        ),
+      );
+    }
+    return const SizedBox();
   }
 
   Widget _buildKPICard({required IconData icon, required Color iconColor, required Color bgColor, required String title, required String value, required String subtitle, required bool isDesktop}) {
@@ -647,18 +921,20 @@ class _InventoryPageState extends State<InventoryPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Container(
-                    width: 40, height: 40,
-                    decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
-                    child: urlImagen.isNotEmpty
-                        ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.network(urlImagen, fit: BoxFit.cover))
-                        : Icon(Icons.devices, size: 20, color: Colors.grey.shade400),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(nombre, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: _primaryDark)),
-                ],
+              Expanded(
+                child: Row(
+                  children: [
+                    Container(
+                      width: 40, height: 40,
+                      decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
+                      child: urlImagen.isNotEmpty
+                          ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.network(urlImagen, fit: BoxFit.cover))
+                          : Icon(Icons.devices, size: 20, color: Colors.grey.shade400),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(nombre, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: _primaryDark))),
+                  ],
+                ),
               ),
               if (_userRole != 'cajero') ...[
                 Row(
@@ -737,6 +1013,7 @@ class _InventoryPageState extends State<InventoryPage> {
                   borderRadius: BorderRadius.circular(4),
                   child: LinearProgressIndicator(value: stockPercentage, backgroundColor: Colors.grey.shade200, color: stockColor, minHeight: 6),
                 ),
+                _buildAlertButtons(docId, nombre, bajoStock),
               ],
             ),
           ),
@@ -790,7 +1067,12 @@ class _InventoryPageState extends State<InventoryPage> {
           ),
           Expanded(flex: 2, child: Align(alignment: Alignment.centerLeft, child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(12)), child: Text(categoria, style: const TextStyle(fontSize: 11))))),
           Expanded(flex: 2, child: Text(_formatearMoneda(precio), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
-          Expanded(flex: 3, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [Text('$cantidad uds', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)), if (bajoStock) ...[const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2), decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(4)), child: Text('Bajo Stock', style: TextStyle(fontSize: 9, color: Colors.red.shade700)))]]), const SizedBox(height: 6), LinearProgressIndicator(value: stockPercentage, backgroundColor: Colors.grey.shade200, color: stockColor, minHeight: 4)])),
+          Expanded(flex: 3, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [Text('$cantidad uds', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)), if (bajoStock) ...[const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2), decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(4)), child: Text('Bajo Stock', style: TextStyle(fontSize: 9, color: Colors.red.shade700)))]]), 
+            const SizedBox(height: 6), 
+            LinearProgressIndicator(value: stockPercentage, backgroundColor: Colors.grey.shade200, color: stockColor, minHeight: 4),
+            _buildAlertButtons(docId, nombre, bajoStock),
+          ])),
           SizedBox(
             width: 80,
             child: Row(
@@ -846,7 +1128,6 @@ class _InventoryPageState extends State<InventoryPage> {
           _buildSidebarItem(Icons.inventory_2, 'Almacén / Inventario', 1),
           _buildSidebarItem(Icons.point_of_sale, 'Registrar Ventas', 2),
           
-          // OCULTAMOS PESTAÑAS "USUARIOS" y "LOG DE AUDITORÍA" A LOS QUE NO SEAN ADMIN
           if (_userRole == 'administrador') ...[
             _buildSidebarItem(Icons.people_alt_outlined, 'Usuarios', 3),
             _buildSidebarItem(Icons.security, 'Log de Auditoría', 4),

@@ -249,6 +249,91 @@ class DashboardPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 24),
                     
+                    // --- TOP 5 MÁS VENDIDOS (¡NUEVO!) ---
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(24),
+                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.grey.shade200)),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.emoji_events, color: Colors.amber.shade600),
+                              const SizedBox(width: 8),
+                              Text('Top 5 Más Vendidos', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: primaryDark)),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          StreamBuilder<QuerySnapshot>(
+                            stream: FirebaseFirestore.instance.collection('ventas').snapshots(),
+                            builder: (context, snapshot) {
+                              if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return const Text('Aún no hay suficientes datos.', style: TextStyle(color: Colors.grey, fontSize: 12));
+
+                              // Diccionario para contar los productos
+                              Map<String, int> conteoProductos = {};
+
+                              for (var doc in snapshot.data!.docs) {
+                                final data = doc.data() as Map<String, dynamic>;
+                                final items = data['articulos'] as List<dynamic>? ?? [];
+                                
+                                for (var item in items) {
+                                  final String nombre = item['nombre']?.toString() ?? 'Desconocido';
+                                  final int cant = (item['cantidad'] ?? 0).toInt();
+                                  
+                                  if (conteoProductos.containsKey(nombre)) {
+                                    conteoProductos[nombre] = conteoProductos[nombre]! + cant;
+                                  } else {
+                                    conteoProductos[nombre] = cant;
+                                  }
+                                }
+                              }
+
+                              if (conteoProductos.isEmpty) return const Text('Sin datos calculables', style: TextStyle(color: Colors.grey, fontSize: 12));
+
+                              // Ordenar de mayor a menor y tomar los primeros 5
+                              var listaOrdenada = conteoProductos.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+                              var top5 = listaOrdenada.take(5).toList();
+
+                              return Column(
+                                children: List.generate(top5.length, (index) {
+                                  final item = top5[index];
+                                  final isFirst = index == 0;
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 12.0),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 28, height: 28,
+                                          decoration: BoxDecoration(
+                                            color: isFirst ? Colors.amber.shade100 : Colors.grey.shade100,
+                                            shape: BoxShape.circle
+                                          ),
+                                          child: Center(
+                                            child: Text(
+                                              '${index + 1}', 
+                                              style: TextStyle(fontWeight: FontWeight.bold, color: isFirst ? Colors.amber.shade800 : Colors.grey.shade600, fontSize: 12)
+                                            )
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Text(item.key, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis),
+                                        ),
+                                        Text('${item.value} uds', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: accentGreen)),
+                                      ],
+                                    ),
+                                  );
+                                }),
+                              );
+                            }
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+
                     // --- MINI PANEL INFORMATIVO (Dato Curioso/Ayuda) ---
                     Container(
                       width: double.infinity,
