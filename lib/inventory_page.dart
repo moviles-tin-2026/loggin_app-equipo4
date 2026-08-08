@@ -32,6 +32,9 @@ class _InventoryPageState extends State<InventoryPage> {
   final _precioController = TextEditingController();
   final _searchController = TextEditingController();
   
+  // CONTROLADOR DE SCROLL PARA LA BARRA WEB
+  final ScrollController _scrollController = ScrollController();
+  
   // VARIABLES DE ESTADO INVENTARIO
   String _busquedaQuery = '';
   final List<String> _categorias = ['Computadoras y laptops', 'Componentes', 'Periféricos', 'Audio', 'Accesorios'];
@@ -106,6 +109,7 @@ class _InventoryPageState extends State<InventoryPage> {
     _stockMinimoController.dispose();
     _precioController.dispose();
     _searchController.dispose();
+    _scrollController.dispose(); // Limpiamos el controlador
     super.dispose();
   }
 
@@ -541,10 +545,9 @@ class _InventoryPageState extends State<InventoryPage> {
   }
 
   // -------------------------------------------------------
-  // VISTA INVENTARIO (CORREGIDA PARA SCROLL MÓVIL)
+  // VISTA INVENTARIO (CORREGIDA PARA SCROLL UNIVERSAL Y WEB)
   // -------------------------------------------------------
   Widget _buildInventoryView(bool isDesktop) {
-    // 1. Extraemos la lista de productos para controlarla independientemente
     Widget listaProductos = Container(
       decoration: isDesktop ? BoxDecoration(
         color: Colors.white,
@@ -593,10 +596,8 @@ class _InventoryPageState extends State<InventoryPage> {
           }
 
           return ListView.separated(
-            // --- MAGIA PARA MÓVILES AQUÍ ---
-            shrinkWrap: !isDesktop, 
-            physics: isDesktop ? const AlwaysScrollableScrollPhysics() : const NeverScrollableScrollPhysics(),
-            // -------------------------------
+            shrinkWrap: true, 
+            physics: const NeverScrollableScrollPhysics(),
             padding: EdgeInsets.symmetric(horizontal: isDesktop ? 24.0 : 0, vertical: 8.0),
             itemCount: docs.length,
             separatorBuilder: (context, index) => isDesktop ? const Divider() : const SizedBox(height: 16),
@@ -611,7 +612,6 @@ class _InventoryPageState extends State<InventoryPage> {
       ),
     );
 
-    // 2. Extraemos el cuerpo principal
     Widget mainColumn = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -803,29 +803,30 @@ class _InventoryPageState extends State<InventoryPage> {
                 Expanded(flex: 2, child: Text('CATEGORÍA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey))),
                 Expanded(flex: 2, child: Text('PRECIO (MXN)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey))),
                 Expanded(flex: 3, child: Text('INVENTARIO', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey))),
-                SizedBox(width: 80, child: Text('ACCIONES', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey))),
+                // --- SOLUCIÓN OVERFLOW: Aumentamos el tamaño de la caja de acciones a 120 ---
+                SizedBox(width: 120, child: Text('ACCIONES', textAlign: TextAlign.right, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey))),
               ],
             ),
           ),
           const Divider(height: 1),
         ],
 
-        // 3. AQUÍ HACEMOS EL PUENTE: 
-        // Si es escritorio mantenemos el Expanded para que tenga su propio scroll local.
-        // Si es móvil lo pintamos normal para que el SingleChildScrollView externo tome el control.
-        if (isDesktop)
-          Expanded(child: listaProductos)
-        else
-          listaProductos,
+        listaProductos,
       ],
     );
 
-    // 4. RETORNO FINAL DINÁMICO
-    return Padding(
-      padding: EdgeInsets.all(isDesktop ? 32.0 : 16.0),
-      child: isDesktop 
-          ? mainColumn 
-          : SingleChildScrollView(child: mainColumn), // Scroll total en móvil
+    return Scrollbar(
+      controller: _scrollController,
+      thumbVisibility: isDesktop,
+      thickness: 8.0,
+      radius: const Radius.circular(10),
+      child: SingleChildScrollView(
+        controller: _scrollController,
+        child: Padding(
+          padding: EdgeInsets.all(isDesktop ? 32.0 : 16.0),
+          child: mainColumn, 
+        ),
+      ),
     );
   }
 
@@ -1073,8 +1074,9 @@ class _InventoryPageState extends State<InventoryPage> {
             LinearProgressIndicator(value: stockPercentage, backgroundColor: Colors.grey.shade200, color: stockColor, minHeight: 4),
             _buildAlertButtons(docId, nombre, bajoStock),
           ])),
+          // --- SOLUCIÓN OVERFLOW: Aumentamos el tamaño de la caja de acciones a 120 ---
           SizedBox(
-            width: 80,
+            width: 120,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
