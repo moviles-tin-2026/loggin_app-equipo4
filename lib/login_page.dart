@@ -3,15 +3,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'inventory_page.dart';
 
-
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
-
 
   @override
   State<LoginPage> createState() => _LoginPageState();
 }
-
 
 class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
@@ -20,10 +17,13 @@ class _LoginPageState extends State<LoginPage> {
   bool _obscurePassword = true;
   bool _isLoading = false;
 
-
-  final Color _primaryDark = const Color(0xFF0F172A);
-  final Color _accentGreen = const Color(0xFF059669);
-
+  // NUEVA PALETA DE COLORES DARK MODE
+  final Color _bgDark = const Color(0xFF09090B); // Fondo principal
+  final Color _cardDark = const Color(0xFF131316); // Tarjeta del login
+  final Color _inputDark = const Color(0xFF1C1C21); // Cajas de texto
+  final Color _accentGreen = const Color(0xFF10B981); // Verde brillante
+  final Color _textWhite = const Color(0xFFF8FAFC); // Texto principal
+  final Color _textGray = const Color(0xFF94A3B8); // Texto secundario
 
   @override
   void dispose() {
@@ -32,23 +32,23 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
-
+  // =======================================================
+  // TU LÓGICA DE FIREBASE INTACTA
+  // =======================================================
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
-
 
     setState(() {
       _isLoading = true;
     });
 
-
     try {
       // 1. Iniciar sesión con Firebase Auth
-      UserCredential userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
-      );
-
+      UserCredential userCredential = await FirebaseAuth.instance
+          .signInWithEmailAndPassword(
+            email: _emailController.text.trim(),
+            password: _passwordController.text.trim(),
+          );
 
       // 2. Buscar el perfil del usuario en Firestore para ver su Rol y Estado
       DocumentSnapshot userDoc = await FirebaseFirestore.instance
@@ -56,22 +56,22 @@ class _LoginPageState extends State<LoginPage> {
           .doc(userCredential.user!.uid)
           .get();
 
-
       if (!mounted) return;
-
 
       if (userDoc.exists) {
         // Extraer los datos (Si no tiene, asume activo y cajero por seguridad)
         String estado = userDoc.get('estado') ?? 'Activo';
         String rol = userDoc.get('rol') ?? 'cajero';
 
-
         // 3. Validar si la cuenta fue inhabilitada por un Administrador
         if (estado == 'Inactivo') {
-          await FirebaseAuth.instance.signOut(); // Le cerramos la sesión inmediatamente
+          await FirebaseAuth.instance
+              .signOut(); // Le cerramos la sesión inmediatamente
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Tu cuenta está inhabilitada. Contacta al administrador.'),
+              content: Text(
+                'Tu cuenta está inhabilitada. Contacta al administrador.',
+              ),
               backgroundColor: Colors.red,
             ),
           );
@@ -81,16 +81,16 @@ class _LoginPageState extends State<LoginPage> {
           return; // Detenemos el proceso para que no entre
         }
 
-
         // 4. Si la cuenta está activa, mostramos mensaje personalizado y lo dejamos entrar
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Inicio exitoso. Estás en modo: ${rol.toUpperCase()}'),
+            content: Text(
+              'Inicio exitoso. Estás en modo: ${rol.toUpperCase()}',
+            ),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 3),
           ),
         );
-
 
         Navigator.pushReplacement(
           context,
@@ -101,13 +101,13 @@ class _LoginPageState extends State<LoginPage> {
         await FirebaseAuth.instance.signOut();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Error: No se encontró el perfil del usuario en la base de datos.'),
+            content: Text(
+              'Error: No se encontró el perfil del usuario en la base de datos.',
+            ),
             backgroundColor: Colors.orange,
           ),
         );
       }
-
-
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
       String message = 'Error al iniciar sesión';
@@ -121,12 +121,8 @@ class _LoginPageState extends State<LoginPage> {
         message = 'Esta cuenta ha sido deshabilitada desde Firebase.';
       }
 
-
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Colors.red,
-        ),
+        SnackBar(content: Text(message), backgroundColor: Colors.red),
       );
     } catch (e) {
       if (!mounted) return;
@@ -145,29 +141,35 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-
+  // =======================================================
+  // DISEÑO VISUAL (NUEVO DARK MODE)
+  // =======================================================
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
     final isDesktop = size.width > 900;
 
-
     return Scaffold(
+      backgroundColor: _bgDark,
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFFF0FDF4), Color(0xFFF8FAFC)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+        decoration: BoxDecoration(
+          // Simulamos el resplandor verde de la imagen en el fondo
+          gradient: RadialGradient(
+            center: const Alignment(-0.8, 0.0),
+            radius: 1.2,
+            colors: [
+              const Color(0xFF062D20).withOpacity(0.8), // Verde oscuro
+              _bgDark, // Negro
+            ],
           ),
         ),
         child: Center(
           child: SingleChildScrollView(
             padding: EdgeInsets.symmetric(
               horizontal: isDesktop ? 64.0 : 24.0,
-              vertical: 32.0
+              vertical: 32.0,
             ),
             child: isDesktop
                 ? Row(
@@ -192,7 +194,6 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-
   Widget _buildLeftInfoSection() {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 500),
@@ -203,53 +204,113 @@ class _LoginPageState extends State<LoginPage> {
             children: [
               Container(
                 padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(color: _primaryDark, borderRadius: BorderRadius.circular(8)),
-                child: const Icon(Icons.hub, color: Colors.white, size: 24),
+                decoration: BoxDecoration(
+                  color: _textWhite,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _accentGreen.withOpacity(0.3),
+                      blurRadius: 10,
+                    ),
+                  ],
+                ),
+                child: Icon(Icons.hub, color: _bgDark, size: 24),
               ),
               const SizedBox(width: 12),
-              Text('PyME-Sync', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: _primaryDark)),
+              Text(
+                'PyME-Sync',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: _textWhite,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 32),
           RichText(
             text: TextSpan(
-              style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold, height: 1.2, color: _primaryDark),
+              style: TextStyle(
+                fontSize: 36,
+                fontWeight: FontWeight.bold,
+                height: 1.2,
+                color: _textWhite,
+              ),
               children: [
-                const TextSpan(text: 'El control absoluto de tu\n'),
-                TextSpan(text: 'stock', style: TextStyle(color: _accentGreen)),
+                const TextSpan(text: 'El control\nabsoluto de tu\n'),
+                TextSpan(
+                  text: 'stock',
+                  style: TextStyle(color: _accentGreen),
+                ),
               ],
             ),
           ),
+          const SizedBox(height: 16),
+          Text(
+            'Una plataforma inteligente para gestionar, sincronizar y controlar tu inventario en tiempo real.',
+            style: TextStyle(fontSize: 14, color: _textGray, height: 1.5),
+          ),
           const SizedBox(height: 48),
-          _buildFeatureItem(icon: Icons.sync, title: 'Escalable', description: 'Sistema con la capacidad de crecer y manejar procesos de manera eficiente.'),
+          _buildFeatureItem(
+            icon: Icons.sync,
+            title: 'Escalable',
+            description:
+                'Sistema con la capacidad de crecer y manejar procesos de manera eficiente.',
+          ),
           const SizedBox(height: 16),
-          _buildFeatureItem(icon: Icons.phone_iphone, title: 'Responsivo', description: 'App movil adaptable a diferentes pantallas de distintos dispositivos'),
+          _buildFeatureItem(
+            icon: Icons.phone_iphone,
+            title: 'Responsivo',
+            description:
+                'App movil adaptable a diferentes pantallas de distintos dispositivos',
+          ),
           const SizedBox(height: 16),
-          _buildFeatureItem(icon: Icons.cloud_done_outlined, title: 'Firebase', description: 'Almacenamiento en la nube.'),
+          _buildFeatureItem(
+            icon: Icons.cloud_done_outlined,
+            title: 'Firebase',
+            description: 'Almacenamiento en la nube.',
+          ),
           const SizedBox(height: 40),
         ],
       ),
     );
   }
 
-
-  Widget _buildFeatureItem({required IconData icon, required String title, required String description}) {
+  Widget _buildFeatureItem({
+    required IconData icon,
+    required String title,
+    required String description,
+  }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(color: _accentGreen.withOpacity(0.1), borderRadius: BorderRadius.circular(6)),
-          child: Icon(icon, color: _accentGreen, size: 18),
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.3),
+            border: Border.all(color: _accentGreen.withOpacity(0.2)),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, color: _accentGreen, size: 20),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 16),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              Text(
+                title,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                  color: _textWhite,
+                ),
+              ),
               const SizedBox(height: 4),
-              Text(description, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+              Text(
+                description,
+                style: TextStyle(fontSize: 12, color: _textGray),
+              ),
             ],
           ),
         ),
@@ -257,16 +318,22 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-
   Widget _buildRightLoginCard() {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 450),
       child: Container(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(40),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: _cardDark,
           borderRadius: BorderRadius.circular(24),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 24, offset: const Offset(0, 10))],
+          border: Border.all(color: Colors.white.withOpacity(0.05)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.5),
+              blurRadius: 30,
+              offset: const Offset(0, 15),
+            ),
+          ],
         ),
         child: Form(
           key: _formKey,
@@ -276,69 +343,156 @@ class _LoginPageState extends State<LoginPage> {
               Center(
                 child: Column(
                   children: [
-                    CircleAvatar(radius: 36, backgroundColor: _accentGreen.withOpacity(0.1), child: Icon(Icons.person, size: 40, color: _accentGreen)),
-                    const SizedBox(height: 16),
-                    Text('Bienvenido de nuevo', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: _primaryDark)),
+                    // El avatar con resplandor verde
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _accentGreen.withOpacity(0.1),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _accentGreen.withOpacity(0.15),
+                            blurRadius: 20,
+                            spreadRadius: 5,
+                          ),
+                        ],
+                      ),
+                      child: Icon(Icons.person, size: 36, color: _accentGreen),
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Bienvenido de nuevo',
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: _textWhite,
+                      ),
+                    ),
                     const SizedBox(height: 8),
-                    Text('Ingresa tus credenciales para continuar', style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+                    Text(
+                      'Ingresa tus credenciales para continuar',
+                      style: TextStyle(fontSize: 13, color: _textGray),
+                    ),
                   ],
                 ),
               ),
-              const SizedBox(height: 32), // Ajustamos el espaciado ya que quitamos los botones
-              const Text('Correo Electrónico', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 40),
+
+              Text(
+                'Correo Electrónico',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: _textWhite,
+                ),
+              ),
               const SizedBox(height: 8),
               TextFormField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
-                style: const TextStyle(fontSize: 14),
-                decoration: _inputDecoration(hint: 'Ej: correo@tuempresa.com', icon: Icons.email_outlined),
+                style: TextStyle(fontSize: 14, color: _textWhite),
+                decoration: _inputDecoration(
+                  hint: 'ej: correo@tuempresa.com',
+                  icon: Icons.email_outlined,
+                ),
                 validator: (value) {
-                  if (value == null || value.isEmpty) return 'Por favor ingresa tu correo';
+                  if (value == null || value.isEmpty)
+                    return 'Por favor ingresa tu correo';
                   if (!value.contains('@')) return 'Ingresa un correo válido';
                   return null;
                 },
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 20),
+
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Contraseña', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  Text(
+                    'Contraseña',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: _textWhite,
+                    ),
+                  ),
                   GestureDetector(
                     onTap: () {},
-                    child: Text('¿Olvidaste tu contraseña?', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: _accentGreen)),
-                  )
+                    child: Text(
+                      '¿Olvidaste tu contraseña?',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: _accentGreen,
+                      ),
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 8),
               TextFormField(
                 controller: _passwordController,
                 obscureText: _obscurePassword,
-                style: const TextStyle(fontSize: 14),
-                decoration: _inputDecoration(hint: 'Ingresa tu contraseña de acceso', icon: Icons.lock_outline).copyWith(
-                  suffixIcon: IconButton(
-                    icon: Icon(_obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: Colors.grey.shade400, size: 20),
-                    onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                  ),
-                ),
+                style: TextStyle(fontSize: 14, color: _textWhite),
+                decoration:
+                    _inputDecoration(
+                      hint: 'Ingresa tu contraseña de acceso',
+                      icon: Icons.lock_outline,
+                    ).copyWith(
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _obscurePassword
+                              ? Icons.visibility_off_outlined
+                              : Icons.visibility_outlined,
+                          color: _textGray,
+                          size: 20,
+                        ),
+                        onPressed: () => setState(
+                          () => _obscurePassword = !_obscurePassword,
+                        ),
+                      ),
+                    ),
                 validator: (value) {
-                  if (value == null || value.isEmpty) return 'Por favor ingresa tu contraseña';
-                  if (value.length < 6) return 'Debe tener al menos 6 caracteres';
+                  if (value == null || value.isEmpty)
+                    return 'Por favor ingresa tu contraseña';
+                  if (value.length < 6)
+                    return 'Debe tener al menos 6 caracteres';
                   return null;
                 },
               ),
               const SizedBox(height: 32),
+
               SizedBox(
                 width: double.infinity,
-                height: 48,
+                height: 52,
                 child: ElevatedButton(
                   onPressed: _isLoading ? null : _handleLogin,
-                  style: ElevatedButton.styleFrom(backgroundColor: _primaryDark, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), elevation: 0),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _accentGreen,
+                    foregroundColor: _bgDark, // Texto oscuro sobre botón verde
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 0,
+                  ),
                   child: _isLoading
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      ? SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: _bgDark,
+                          ),
+                        )
                       : Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: const [
-                            Text('Ingresar a PyME-Sync', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                            Text(
+                              'Ingresar a PyME-Sync',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                             SizedBox(width: 8),
                             Icon(Icons.arrow_forward, size: 18),
                           ],
@@ -352,19 +506,33 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-
-  InputDecoration _inputDecoration({required String hint, required IconData icon}) {
+  InputDecoration _inputDecoration({
+    required String hint,
+    required IconData icon,
+  }) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
-      prefixIcon: Icon(icon, color: Colors.grey.shade400, size: 20),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      filled: true, fillColor: Colors.white,
-      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade200)),
-      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: _accentGreen)),
-      errorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Colors.red)),
-      focusedErrorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Colors.red)),
+      hintStyle: TextStyle(fontSize: 13, color: _textGray.withOpacity(0.5)),
+      prefixIcon: Icon(icon, color: _textGray, size: 20),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      filled: true,
+      fillColor: _inputDark,
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.transparent),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: _accentGreen.withOpacity(0.5)),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.red.withOpacity(0.5)),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.red),
+      ),
     );
   }
 }
-
