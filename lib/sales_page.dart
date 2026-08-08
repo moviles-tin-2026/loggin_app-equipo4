@@ -20,6 +20,14 @@ class _SalesPageState extends State<SalesPage> {
   bool _isLoadingRole = true;
 
 
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+
+  // NUEVO: STREAMS FIJOS PARA EVITAR EL "BRINCO" Y EL "SE QUEDA CARGANDO"
+  late final Stream<QuerySnapshot> _inventarioStream = _firestore.collection('inventarios').snapshots();
+  late final Stream<QuerySnapshot> _ventasStream = _firestore.collection('ventas').orderBy('fecha', descending: true).snapshots();
+
+
   // VARIABLES MÓDULO DE VENTAS (POS)
   bool _isRegistrarVenta = true;
   List<Map<String, dynamic>> _carrito = [];
@@ -35,9 +43,6 @@ class _SalesPageState extends State<SalesPage> {
     'Audio',
     'Accesorios'
   ];
-
-
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
 
   // PALETA DE COLORES (BRANDING)
@@ -332,77 +337,78 @@ class _SalesPageState extends State<SalesPage> {
       barrierDismissible: false,
       builder: (context) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Container(
-          width: 400,
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(color: _accentGreen.withOpacity(0.1), shape: BoxShape.circle),
-                child: Icon(Icons.check_circle_outline, color: _accentGreen, size: 48)
-              ),
-              const SizedBox(height: 16),
-              Text('¡Venta Exitosa!', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: _primaryDark)),
-              const SizedBox(height: 8),
-              const Text('Ticket generado correctamente', style: TextStyle(color: Colors.grey)),
-              const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: Divider()),
-             
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('FOLIO: $folio', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(height: 4), Text('FECHA: $fechaActual', style: const TextStyle(fontSize: 10, color: Colors.grey))]),
-                  Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Text(horaActual, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(height: 4), const Text('CAJA: #1', style: TextStyle(fontSize: 10, color: Colors.grey))]),
-                ],
-              ),
-              const SizedBox(height: 24),
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: const [Text('CONCEPTO', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)), Text('IMPORTE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey))]),
-              const SizedBox(height: 8),
-              ...items.map((item) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
+        // SOLUCIÓN AL OVERFLOW: SingleChildScrollView envuelve todo el ticket
+        child: SingleChildScrollView(
+          child: Container(
+            width: 400,
+            padding: const EdgeInsets.all(24), // Reduje un poco el padding para mejor ajuste
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(color: _accentGreen.withOpacity(0.1), shape: BoxShape.circle),
+                  child: Icon(Icons.check_circle_outline, color: _accentGreen, size: 48)
+                ),
+                const SizedBox(height: 16),
+                Text('¡Venta Exitosa!', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: _primaryDark)),
+                const SizedBox(height: 8),
+                const Text('Ticket generado correctamente', style: TextStyle(color: Colors.grey)),
+                const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: Divider()),
+               
+                Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Expanded(child: Text('${item['cantidad']}x ${item['nombre']}', style: const TextStyle(fontSize: 13))),
-                    Text(_formatearMoneda(item['precio'] * item['cantidad']), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('FOLIO: $folio', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(height: 4), Text('FECHA: $fechaActual', style: const TextStyle(fontSize: 10, color: Colors.grey))]),
+                    Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Text(horaActual, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(height: 4), const Text('CAJA: #1', style: TextStyle(fontSize: 10, color: Colors.grey))]),
                   ],
                 ),
-              )).toList(),
-              const Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Divider()),
-             
-              // TICKET CON IMPUESTOS INCLUIDOS
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Subtotal', style: TextStyle(fontSize: 12)), Text(_formatearMoneda(sub), style: const TextStyle(fontSize: 12))]),
-              const SizedBox(height: 8),
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('IVA', style: TextStyle(fontSize: 12)), const Text('Incluido', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green))]),
-              const SizedBox(height: 16),
-             
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('Total Pagado', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: _primaryDark)), Text(_formatearMoneda(total), style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _primaryDark))]),
-              const SizedBox(height: 16),
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('MÉTODO DE PAGO', style: TextStyle(fontSize: 10, color: Colors.grey)), Text(metodo.toUpperCase(), style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: _primaryDark))]),
-              const SizedBox(height: 32),
-             
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      // AQUÍ HACEMOS LA MAGIA DE LA IMPRESIÓN WEB
-                      onPressed: () => html.window.print(),
-                      style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), side: BorderSide(color: _primaryDark), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-                      child: Text('Imprimir', style: TextStyle(color: _primaryDark))
-                    )
+                const SizedBox(height: 24),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: const [Text('CONCEPTO', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)), Text('IMPORTE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey))]),
+                const SizedBox(height: 8),
+                ...items.map((item) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(child: Text('${item['cantidad']}x ${item['nombre']}', style: const TextStyle(fontSize: 13))),
+                      Text(_formatearMoneda(item['precio'] * item['cantidad']), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                    ],
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: ElevatedButton.styleFrom(backgroundColor: _primaryDark, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-                      child: const Text('Aceptar')
-                    )
-                  ),
-                ],
-              )
-            ],
+                )).toList(),
+                const Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Divider()),
+               
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Subtotal', style: TextStyle(fontSize: 12)), Text(_formatearMoneda(sub), style: const TextStyle(fontSize: 12))]),
+                const SizedBox(height: 8),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('IVA', style: TextStyle(fontSize: 12)), const Text('Incluido', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green))]),
+                const SizedBox(height: 16),
+               
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('Total Pagado', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: _primaryDark)), Text(_formatearMoneda(total), style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _primaryDark))]),
+                const SizedBox(height: 16),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('MÉTODO DE PAGO', style: TextStyle(fontSize: 10, color: Colors.grey)), Text(metodo.toUpperCase(), style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: _primaryDark))]),
+                const SizedBox(height: 32),
+               
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => html.window.print(),
+                        style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), side: BorderSide(color: _primaryDark), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                        child: Text('Imprimir', style: TextStyle(color: _primaryDark))
+                      )
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: ElevatedButton.styleFrom(backgroundColor: _primaryDark, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                        child: const Text('Aceptar')
+                      )
+                    ),
+                  ],
+                )
+              ],
+            ),
           ),
         ),
       ),
@@ -483,6 +489,7 @@ class _SalesPageState extends State<SalesPage> {
       );
     } else {
       return SingleChildScrollView(
+        key: const PageStorageKey<String>('pos_mobile_scroll'),
         child: Column(
           children: [
             _buildCatalogoPOS(isDesktop),
@@ -497,10 +504,16 @@ class _SalesPageState extends State<SalesPage> {
 
   Widget _buildCatalogoPOS(bool isDesktop) {
     Widget gridContenido = StreamBuilder<QuerySnapshot>(
-      stream: _firestore.collection('inventarios').snapshots(),
+      stream: _inventarioStream,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return const Center(child: Text('No hay productos disponibles'));
+        if (snapshot.hasError) return const Center(child: Text('Error al cargar productos'));
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+       
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return const Center(child: Text('No hay productos disponibles'));
+        }
 
 
         var docs = snapshot.data!.docs;
@@ -517,6 +530,7 @@ class _SalesPageState extends State<SalesPage> {
 
 
         return GridView.builder(
+          key: const PageStorageKey<String>('pos_grid_scroll'),
           shrinkWrap: !isDesktop,
           physics: isDesktop ? null : const NeverScrollableScrollPhysics(),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -717,7 +731,6 @@ class _SalesPageState extends State<SalesPage> {
           decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(bottom: Radius.circular(16))),
           child: Column(
             children: [
-              // ACTUALIZACIÓN VISUAL DEL IVA EN EL CARRITO
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Subtotal', style: TextStyle(fontSize: 12)), Text(_formatearMoneda(_subtotalCarrito), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold))]),
               const SizedBox(height: 4),
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('IVA', style: TextStyle(fontSize: 12)), const Text('Incluido en el precio', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green))]),
@@ -764,7 +777,6 @@ class _SalesPageState extends State<SalesPage> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  // VINCULAMOS AL NUEVO FLUJO ANIMADO
                   onPressed: _carrito.isEmpty ? null : _procesarVentaConAnimacion,
                   style: ElevatedButton.styleFrom(backgroundColor: _primaryDark, disabledBackgroundColor: Colors.grey.shade300, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
                   child: const Text('Finalizar Venta', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
@@ -790,9 +802,8 @@ class _SalesPageState extends State<SalesPage> {
   Widget _buildHistorialVentas(bool isDesktop) {
     Widget contenidoHistorial = Column(
       children: [
-        // Indicadores (KPIs) superiores
         StreamBuilder<QuerySnapshot>(
-          stream: _firestore.collection('ventas').snapshots(),
+          stream: _ventasStream,
           builder: (context, snapshot) {
             if (!snapshot.hasData) return const SizedBox();
             double totalVendido = 0;
@@ -819,7 +830,6 @@ class _SalesPageState extends State<SalesPage> {
         const SizedBox(height: 24),
 
 
-        // Buscador y Controladores de Filtros
         Container(
           padding: EdgeInsets.all(isDesktop ? 0 : 16),
           decoration: isDesktop ? null : BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey.shade200)),
@@ -852,12 +862,16 @@ class _SalesPageState extends State<SalesPage> {
         const SizedBox(height: 24),
 
 
-        // Grid/Wrap Flexible de la colección de Ventas
         StreamBuilder<QuerySnapshot>(
-          stream: _firestore.collection('ventas').orderBy('fecha', descending: true).snapshots(),
+          stream: _ventasStream,
           builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-            if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.receipt_long, size: 48, color: Colors.grey.shade300), const SizedBox(height: 16), const Text('No hay ventas registradas')]));
+            if (snapshot.hasError) return const Center(child: Text('Error al cargar historial'));
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+              return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.receipt_long, size: 48, color: Colors.grey.shade300), const SizedBox(height: 16), const Text('No hay ventas registradas')]));
+            }
 
 
             var docs = snapshot.data!.docs;
