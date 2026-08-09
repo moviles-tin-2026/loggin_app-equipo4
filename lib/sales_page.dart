@@ -32,8 +32,15 @@ class _SalesPageState extends State<SalesPage> {
   bool _isRegistrarVenta = true;
   List<Map<String, dynamic>> _carrito = [];
   String _metodoPago = 'Efectivo';
+ 
   final _searchVentasController = TextEditingController();
   String _busquedaVentasQuery = '';
+ 
+  // CONTROLADOR INDEPENDIENTE PARA EL HISTORIAL
+  final _searchHistorialController = TextEditingController();
+  String _busquedaHistorialQuery = '';
+
+
   String _filtroCategoriaVentas = 'Todos';
   String _filtroHistorialPagos = 'Todos los Métodos';
   final List<String> _categorias = [
@@ -56,6 +63,10 @@ class _SalesPageState extends State<SalesPage> {
     _cargarRolUsuario();
     _searchVentasController.addListener(() {
       setState(() => _busquedaVentasQuery = _searchVentasController.text.toLowerCase());
+    });
+    // ESCUCHADOR PARA EL BUSCADOR DEL HISTORIAL
+    _searchHistorialController.addListener(() {
+      setState(() => _busquedaHistorialQuery = _searchHistorialController.text.toLowerCase());
     });
   }
 
@@ -104,6 +115,7 @@ class _SalesPageState extends State<SalesPage> {
   @override
   void dispose() {
     _searchVentasController.dispose();
+    _searchHistorialController.dispose();
     super.dispose();
   }
 
@@ -337,11 +349,10 @@ class _SalesPageState extends State<SalesPage> {
       barrierDismissible: false,
       builder: (context) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        // SOLUCIÓN AL OVERFLOW: SingleChildScrollView envuelve todo el ticket
         child: SingleChildScrollView(
           child: Container(
             width: 400,
-            padding: const EdgeInsets.all(24), // Reduje un poco el padding para mejor ajuste
+            padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -392,7 +403,7 @@ class _SalesPageState extends State<SalesPage> {
                   children: [
                     Expanded(
                       child: OutlinedButton(
-                        onPressed: () => html.window.print(),
+                        onPressed: () => _imprimirTicketWeb(folio, fechaActual, horaActual, items, sub, total, metodo),
                         style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), side: BorderSide(color: _primaryDark), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
                         child: Text('Imprimir', style: TextStyle(color: _primaryDark))
                       )
@@ -413,6 +424,89 @@ class _SalesPageState extends State<SalesPage> {
         ),
       ),
     );
+  }
+
+
+  // =======================================================
+  // NUEVA FUNCIÓN: GENERADOR DE TICKET NATIVO PARA WEB (MÉTODO BLOB)
+  // =======================================================
+  void _imprimirTicketWeb(String folio, String fecha, String hora, List<Map<String, dynamic>> items, double sub, double total, String metodo) {
+    String itemsHtml = '';
+    for(var item in items) {
+      itemsHtml += '''
+        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+          <span style="flex: 1;">${item['cantidad']}x ${item['nombre']}</span>
+          <span style="font-weight: bold;">${_formatearMoneda((item['precio'] * item['cantidad']).toDouble())}</span>
+        </div>
+      ''';
+    }
+
+
+    final htmlContent = '''
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Ticket $folio</title>
+        <style>
+          body { font-family: 'Courier New', Courier, monospace; width: 300px; margin: 0 auto; padding: 20px; color: #000; font-size: 12px; }
+          .header { text-align: center; margin-bottom: 16px; }
+          .header h2 { margin: 0 0 4px 0; font-size: 18px; }
+          .divider { border-bottom: 1px dashed #000; margin: 12px 0; }
+          .flex-between { display: flex; justify-content: space-between; margin-bottom: 4px; }
+          .bold { font-weight: bold; }
+        </style>
+      </head>
+      <body onload="window.print(); window.setTimeout(function(){ window.close(); }, 500);">
+        <div class="header">
+          <h2>PyME-Sync</h2>
+          <p style="margin: 0;">Mostrador General</p>
+        </div>
+        <div class="divider"></div>
+        <div class="flex-between">
+          <span>FOLIO:</span><span>$folio</span>
+        </div>
+        <div class="flex-between">
+          <span>FECHA:</span><span>$fecha $hora</span>
+        </div>
+        <div class="flex-between">
+          <span>CAJA:</span><span>#1</span>
+        </div>
+        <div class="divider"></div>
+        <div class="flex-between bold" style="margin-bottom: 8px;">
+          <span>CONCEPTO</span><span>IMPORTE</span>
+        </div>
+        $itemsHtml
+        <div class="divider"></div>
+        <div class="flex-between">
+          <span>Subtotal</span><span>${_formatearMoneda(sub)}</span>
+        </div>
+        <div class="flex-between">
+          <span>IVA</span><span>Incluido</span>
+        </div>
+        <div class="divider"></div>
+        <div class="flex-between bold" style="font-size: 16px; margin-top: 8px;">
+          <span>TOTAL</span><span>${_formatearMoneda(total)}</span>
+        </div>
+        <div class="flex-between" style="margin-top: 8px;">
+          <span>MÉTODO:</span><span>${metodo.toUpperCase()}</span>
+        </div>
+        <div class="divider"></div>
+        <div class="header">
+          <p>¡Gracias por su compra!</p>
+          <p style="font-size: 10px; color: #555;">Documento sin validez fiscal</p>
+        </div>
+      </body>
+      </html>
+    ''';
+
+
+    final blob = html.Blob([htmlContent], 'text/html');
+    final url = html.Url.createObjectUrlFromBlob(blob);
+    html.window.open(url, '_blank');
+   
+    Future.delayed(const Duration(seconds: 5), () {
+      html.Url.revokeObjectUrl(url);
+    });
   }
 
 
@@ -842,8 +936,17 @@ class _SalesPageState extends State<SalesPage> {
                 width: isDesktop ? 300 : double.infinity,
                 margin: EdgeInsets.only(bottom: isDesktop ? 0 : 16),
                 child: TextField(
-                  decoration: InputDecoration(hintText: 'Buscar por folio o artículo...', hintStyle: const TextStyle(fontSize: 13), prefixIcon: const Icon(Icons.search, size: 20, color: Colors.grey), border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)), contentPadding: const EdgeInsets.symmetric(vertical: 0)),
-                  onChanged: (val) => setState(() {}),
+                  controller: _searchHistorialController, // CONTROLADOR INDEPENDIENTE ASIGNADO
+                  decoration: InputDecoration(
+                    hintText: 'Buscar por folio o artículo...',
+                    hintStyle: const TextStyle(fontSize: 13),
+                    prefixIcon: const Icon(Icons.search, size: 20, color: Colors.grey),
+                    suffixIcon: _busquedaHistorialQuery.isNotEmpty
+                        ? IconButton(icon: const Icon(Icons.clear, size: 18), onPressed: () => _searchHistorialController.clear())
+                        : null,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 0)
+                  ),
                 ),
               ),
               SingleChildScrollView(
@@ -878,6 +981,39 @@ class _SalesPageState extends State<SalesPage> {
            
             if (_filtroHistorialPagos != 'Todos los Métodos') {
               docs = docs.where((doc) => doc['metodoPago'] == _filtroHistorialPagos).toList();
+            }
+
+
+            // NUEVO: FILTRO INTELIGENTE PARA EL HISTORIAL
+            if (_busquedaHistorialQuery.isNotEmpty) {
+              docs = docs.where((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+               
+                // Buscamos coincidencia en el número de folio
+                final folio = (data['folio'] ?? '').toString().toLowerCase();
+               
+                // Buscamos coincidencia adentro de la lista de artículos del ticket
+                final articulos = data['articulos'] as List<dynamic>? ?? [];
+                bool matchArticulo = articulos.any((item) {
+                  final nombreArticulo = (item['nombre'] ?? '').toString().toLowerCase();
+                  return nombreArticulo.contains(_busquedaHistorialQuery);
+                });
+
+
+                // Mostramos el ticket si coincide el folio o el nombre de lo que se vendió
+                return folio.contains(_busquedaHistorialQuery) || matchArticulo;
+              }).toList();
+            }
+
+
+            // Si la búsqueda no arroja ningún resultado, mostramos un mensaje amigable
+            if (docs.isEmpty) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 40.0),
+                  child: Text('No se encontraron tickets con esa búsqueda.', style: TextStyle(color: Colors.grey)),
+                ),
+              );
             }
 
 
